@@ -191,6 +191,7 @@ class CameraApp:
         self.last_web_frame = None
         self.video_active = False
         self.video_start_time = 0.0
+        self.burst_count = 5
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -562,6 +563,27 @@ class CameraApp:
             logger.error(f"Capture failed: {e}")
             self.notify("Capture Error")
 
+    def capture_burst(self) -> None:
+        try:
+            ts_base = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.notify(f"BURST {self.burst_count} shots...", timeout=1.0)
+            
+            for i in range(self.burst_count):
+                ts = f"{ts_base}_b{i}"
+                jpg_path = PHOTO_DIR / f"img_{ts}.jpg"
+                self.camera.capture_file(str(jpg_path))
+                self.last_capture = jpg_path.name
+                
+                # Update progress visually if possible (simple notify every few shots)
+                if i % 2 == 0:
+                    self.notify(f"Bursting {i+1}/{self.burst_count}")
+            
+            self.notify(f"Burst DONE: {ts_base}")
+            logger.info(f"Burst captured: {self.burst_count} shots")
+        except Exception as e:
+            logger.error(f"Burst capture failed: {e}")
+            self.notify("Burst Error")
+
     def open_gallery(self) -> None:
         """Launch fbi slideshow for captured photos."""
         try:
@@ -584,7 +606,13 @@ class CameraApp:
     def handle_action(self, action: str) -> None:
         if action == "capture":
             self.capture()
+        elif action == "burst":
+            self.capture_burst()
+        elif action == "toggle_burst_count":
+            self.burst_count = 10 if self.burst_count == 5 else (20 if self.burst_count == 10 else 5)
+            self.notify(f"Burst Count: {self.burst_count}")
         elif action == "toggle_video":
+
             if not self.video_active:
                 try:
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -675,6 +703,8 @@ class CameraApp:
             v_label = "STOP VIDEO" if self.video_active else "START VIDEO"
             return [
                 ("CAPTURE", "capture"),
+                ("BURST", "burst"),
+                (f"B-COUNT ({self.burst_count})", "toggle_burst_count"),
                 (v_label, "toggle_video"),
                 ("GRID NEXT", "grid_next"),
                 ("NEXT MENU", "menu_next"),
