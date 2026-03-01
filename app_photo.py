@@ -192,12 +192,20 @@ class CameraApp:
         self.video_active = False
         self.video_start_time = 0.0
         self.burst_count = 5
+        self.self_timer_delay = 0 # 0, 2, 5, 10
+        self.timer_active = False
+        self.timer_start_time = 0.0
+        self.cpu_temp = 0.0
+        self.last_cpu_check = 0.0
 
         self.message = "Ready"
         self.message_until = 0.0
         self.last_capture = "-"
         self.hardware_summary = self.describe_hardware()
         self.gallery_mode = False
+        self.gallery_files = []
+        self.gallery_index = 0
+        self.current_image = None
         self.encoder_enabled = False
 
         self.apply_color_profile("natural", notify=False)
@@ -333,12 +341,20 @@ class CameraApp:
     def _encoder_callback(self, channel: int) -> None:
         # Basic state machine for rotary encoder
         dt_state = GPIO.input(ENC_DT)
+        if self.gallery_mode:
+            self.handle_action("gal_next" if dt_state == 1 else "gal_prev")
+            return
+            
         if dt_state == 1:
             self.handle_action("param_up")
         else:
             self.handle_action("param_down")
 
     def _button_callback(self, channel: int) -> None:
+        if self.gallery_mode:
+            self.handle_action("gal_quit")
+            return
+            
         # Validate or capture
         if self.current_menu() == Menu.CAPTURE:
             self.handle_action("capture")
@@ -520,7 +536,23 @@ class CameraApp:
 
         self.screen.blit(overlay, (0, 0))
 
-    def capture(self) -> None:
+    def update_timer_logic(self) -> None:
+        if self.timer_active:
+            if time.time() - self.timer_start_time >= self.self_timer_delay:
+                self.timer_active = False
+                self.capture(force=True)
+
+    def capture(self, force: bool = False) -> None:
+        if self.self_timer_delay > 0 and not force:
+            if not self.timer_active:
+                self.timer_active = True
+                self.timer_start_time = time.time()
+                self.notify(f"Timer started: {self.self_timer_delay}s")
+            else:
+                self.timer_active = False
+                self.notify("Timer cancelled")
+            return
+
         try:
             ts_base = datetime.now().strftime("%Y%m%d_%H%M%S")
             ev_steps = [-1.0, 0.0, 1.0] if self.bracketing_enabled else [0.0]
@@ -585,20 +617,33 @@ class CameraApp:
             self.notify("Burst Error")
 
     def open_gallery(self) -> None:
-        """Launch fbi slideshow for captured photos."""
+        """Launch internal Pygame gallery."""
         try:
-            photos = sorted(list(PHOTO_DIR.glob("*.jpg")), reverse=True)
-            if not photos:
+            self.gallery_files = sorted(list(PHOTO_DIR.glob("*.jpg")), reverse=True)
+            if not self.gallery_files:
                 self.notify("No photos found")
                 return
             
-            self.notify("Launching Gallery...")
-            # fbi -T 1 -d /dev/fb0 -noverbose -a *.jpg
-            subprocess.Popen(["fbi", "-T", "1", "-d", "/dev/fb0", "-noverbose", "-a"] + [str(p) for p in photos[:20]])
-            logger.info("Gallery (fbi) launched")
+            self.gallery_mode = True
+            self.gallery_index = 0
+            self.load_gallery_image()
+            logger.info("Internal gallery opened")
         except Exception as e:
             logger.error(f"Failed to launch gallery: {e}")
             self.notify("Gallery Error")
+
+    def load_gallery_image(self) -> None:
+        try:
+            path = str(self.gallery_files[self.gallery_index])
+            img = pygame.image.load(path).convert()
+            img_rect = img.get_rect()
+            scale = min(SCREEN_W / img_rect.width, SCREEN_H / img_rect.height)
+            new_w = int(img_rect.width * scale)
+            new_h = int(img_rect.height * scale)
+            self.current_image = pygame.transform.scale(img, (new_w, new_h))
+        except Exception as e:
+            logger.error(f"Failed to load image: {e}")
+            self.current_image = None
 
     def current_menu(self) -> Menu:
         return self.menu_order[self.menu_idx]
@@ -611,6 +656,11 @@ class CameraApp:
         elif action == "toggle_burst_count":
             self.burst_count = 10 if self.burst_count == 5 else (20 if self.burst_count == 10 else 5)
             self.notify(f"Burst Count: {self.burst_count}")
+        elif action == "toggle_timer":
+            opts = [0, 2, 5, 10]
+            idx = (opts.index(self.self_timer_delay) + 1) % len(opts)
+            self.self_timer_delay = opts[idx]
+            self.notify(f"Self-timer: {self.self_timer_delay}s" if self.self_timer_delay else "Self-timer: OFF")
         elif action == "toggle_video":
 
             if not self.video_active:
@@ -686,6 +736,16 @@ class CameraApp:
             self.menu_idx = (self.menu_idx + 1) % len(self.menu_order)
         elif action == "menu_prev":
             self.menu_idx = (self.menu_idx - 1) % len(self.menu_order)
+        elif action == "gal_next":
+            if self.gallery_mode and self.gallery_files:
+                self.gallery_index = (self.gallery_index + 1) % len(self.gallery_files)
+                self.load_gallery_image()
+        elif action == "gal_prev":
+            if self.gallery_mode and self.gallery_files:
+                self.gallery_index = (self.gallery_index - 1) % len(self.gallery_files)
+                self.load_gallery_image()
+        elif action == "gal_quit":
+            self.gallery_mode = False
         elif action == "toggle_raw":
             self.raw_enabled = not self.raw_enabled
             self.notify(f"RAW (DNG) {'ON' if self.raw_enabled else 'OFF'}")
@@ -701,12 +761,13 @@ class CameraApp:
         menu = self.current_menu()
         if menu == Menu.CAPTURE:
             v_label = "STOP VIDEO" if self.video_active else "START VIDEO"
+            t_label = f"TIMER: {self.self_timer_delay}s" if self.self_timer_delay else "TIMER: OFF"
             return [
                 ("CAPTURE", "capture"),
                 ("BURST", "burst"),
                 (f"B-COUNT ({self.burst_count})", "toggle_burst_count"),
                 (v_label, "toggle_video"),
-                ("GRID NEXT", "grid_next"),
+                (t_label, "toggle_timer"),
                 ("NEXT MENU", "menu_next"),
                 ("QUIT", "quit"),
             ]
@@ -803,6 +864,28 @@ class CameraApp:
                 pygame.draw.line(self.screen, (255, 255, 255, 180), (x + i, y + hist_h), (x + i, y + hist_h - hist_norm[i]))
 
     def draw(self, frame: np.ndarray) -> None:
+        if self.gallery_mode:
+            self.screen.fill((10, 10, 10))
+            if self.current_image:
+                rect = self.current_image.get_rect(center=(SCREEN_W//2, SCREEN_H//2))
+                self.screen.blit(self.current_image, rect)
+                
+                # Overlay
+                pygame.draw.rect(self.screen, (0, 0, 0, 150), (0, 0, SCREEN_W, 40))
+                txt = self.font.render(f"{self.gallery_index+1}/{len(self.gallery_files)} - {self.gallery_files[self.gallery_index].name}", True, (240, 240, 240))
+                self.screen.blit(txt, (10, 10))
+                
+                # Exit button
+                pygame.draw.rect(self.screen, (200, 50, 50), (SCREEN_W - 100, 5, 90, 30), border_radius=5)
+                txt_exit = self.small.render("EXIT", True, (255, 255, 255))
+                self.screen.blit(txt_exit, (SCREEN_W - 75, 11))
+            else:
+                txt = self.font.render("Loading...", True, (255, 255, 255))
+                self.screen.blit(txt, (SCREEN_W//2 - 50, SCREEN_H//2))
+                
+            pygame.display.flip()
+            return
+
         is_left_panel = (self.current_menu() == Menu.SYSTEM or self.current_menu() == Menu.TIMELAPSE)
         preview_x = PANEL_W if is_left_panel else 0
         panel_x = 0 if is_left_panel else PREVIEW_W
@@ -835,6 +918,12 @@ class CameraApp:
             txt = self.font.render(f"REC {m:02d}:{s:02d}", True, (255, 0, 0))
             self.screen.blit(txt, (preview_x + 50, 48))
 
+        # Draw Timer countdown
+        if self.timer_active:
+            rem = max(0, self.self_timer_delay - (time.time() - self.timer_start_time))
+            txt = self.font.render(f"TIMER {rem:.1f}s", True, (255, 150, 0))
+            self.screen.blit(txt, (preview_x + 50, 80))
+
         # Draw Sync indicator
         if self.sync_active:
             # Blue WiFi icon replacement (simple circle)
@@ -861,6 +950,15 @@ class CameraApp:
             
             txt = self.small.render(f"{int(self.battery_percent)}%", True, (255, 255, 255))
             self.screen.blit(txt, (bat_x - 75, 18))
+
+        # Draw CPU Temp
+        if self.cpu_temp > 0:
+            c_color = (255, 0, 0) if self.cpu_temp > 75 else ((255, 165, 0) if self.cpu_temp > 65 else (0, 255, 0))
+            txt = self.small.render(f"{self.cpu_temp:.0f}°C", True, c_color)
+            cpu_x = preview_x + PREVIEW_W - 55
+            if self.sync_active: cpu_x -= 100
+            cpu_y = 18 if self.battery_percent < 0 else 42
+            self.screen.blit(txt, (cpu_x, cpu_y))
 
         # Draw Panel
         panel_rect = pygame.Rect(panel_x, 0, PANEL_W, SCREEN_H)
@@ -931,6 +1029,16 @@ class CameraApp:
         self.screen.blit(overlay, (offset_x, 0))
 
     def click(self, pos: Tuple[int, int]) -> None:
+        if self.gallery_mode:
+            x, y = pos
+            if y < 50 and x > SCREEN_W - 120:
+                self.handle_action("gal_quit")
+            elif x < SCREEN_W // 2:
+                self.handle_action("gal_prev")
+            else:
+                self.handle_action("gal_next")
+            return
+
         for rect, _title, action in self.buttons():
             if rect.collidepoint(pos):
                 self.handle_action(action)
@@ -952,13 +1060,22 @@ class CameraApp:
                         if event.key == pygame.K_DOWN:
                             self.handle_action("param_down")
                         if event.key == pygame.K_LEFT:
-                            self.handle_action("menu_prev")
+                            self.handle_action("gal_prev" if self.gallery_mode else "menu_prev")
                         if event.key == pygame.K_RIGHT:
-                            self.handle_action("menu_next")
-                    if event.type == pygame.MOUSEBUTTONDOWN:
+                            self.handle_action("gal_next" if self.gallery_mode else "menu_next")
+                        if event.key == pygame.K_a:
                         self.click(event.pos)
 
                 self.update_timelapse_logic()
+                self.update_timer_logic()
+                
+                if time.time() - self.last_cpu_check > 5.0:
+                    try:
+                        with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                            self.cpu_temp = float(f.read()) / 1000.0
+                    except:
+                        pass
+                    self.last_cpu_check = time.time()
 
                 frame = self.camera.capture_array()
                 self.last_web_frame = frame.copy() # Shared for web stream
