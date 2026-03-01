@@ -62,6 +62,8 @@ python3 app_photo.py
 ```bash
 PIMAGE_ENCODER=0 python3 app_photo.py
 ```
+- Rotation d'affichage (optionnel): `PIMAGE_ROTATE=0|90|180|270`
+- UI tactile: boutons transparents sur les bords + bouton central de capture.
 
 ### Installation du Service (Autostart)
 ```bash
