@@ -30,6 +30,11 @@ try:
 except ImportError:  # pragma: no cover - not available on non-RPi dev machines
     Picamera2 = None
 
+try:
+    import RPi.GPIO as GPIO
+except ImportError:  # pragma: no cover - not available on non-RPi dev machines
+    GPIO = None
+
 
 SCREEN_W = 800
 SCREEN_H = 480
@@ -144,6 +149,15 @@ class CameraApp:
 
         self.apply_color_profile("natural", notify=False)
         self.apply_all_controls()
+
+    def setup_encoder(self) -> None:
+        if GPIO is None:
+            return
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup([ENC_CLK, ENC_DT, ENC_SW], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        self.enc_last_clk = GPIO.input(ENC_CLK)
+        self.enc_last_sw = GPIO.input(ENC_SW)
+        self.encoder_enabled = True
 
     def notify(self, text: str, timeout: float = 1.6) -> None:
         self.message = text
@@ -316,6 +330,8 @@ class CameraApp:
     def handle_action(self, action: str) -> None:
         if action == "capture":
             self.capture()
+        elif action == "gallery":
+            self.enter_gallery()
         elif action == "quit":
             raise SystemExit
         elif action == "param_up":
@@ -462,9 +478,14 @@ class CameraApp:
         pygame.display.flip()
 
     def click(self, pos: Tuple[int, int]) -> None:
-        for rect, _title, action in self.buttons():
+        rects = self.gallery_button_rects() if self.gallery_mode else self.buttons()
+        for i, (rect, _title, action) in enumerate(rects):
             if rect.collidepoint(pos):
-                self.handle_action(action)
+                self.focus_idx = i
+                if self.gallery_mode:
+                    self.handle_gallery_action(action)
+                else:
+                    self.handle_action(action)
                 return
 
     def run(self) -> None:
@@ -499,12 +520,20 @@ class CameraApp:
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.click(event.pos)
 
+                self.handle_encoder_input()
+
+                if self.gallery_mode and self.slideshow and self.gallery_files and time.time() >= self.next_slide_at:
+                    self.handle_gallery_action("gal_next")
+                    self.next_slide_at = time.time() + self.slide_every_s
+
                 frame = self.camera.capture_array()
                 self.draw(frame)
                 self.clock.tick(28)
         finally:
             self.camera.stop()
             pygame.quit()
+            if self.encoder_enabled:
+                GPIO.cleanup()
 
 
 def main() -> int:
