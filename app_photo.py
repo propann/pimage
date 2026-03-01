@@ -48,8 +48,7 @@ except ImportError:
     SMBus = None
 
 try:
-    from flask import Flask, Response, render_template_string
-    import cv2
+    from flask import Flask
 except ImportError:
     Flask = None
 
@@ -137,12 +136,50 @@ class CameraApp:
         self.encoder_enabled = False
 
         self.apply_color_profile("natural", notify=False)
+        self.load_user_state()
         self.apply_all_controls()
         self.setup_encoder()
         threading.Thread(target=self.sync_worker, daemon=True).start()
         threading.Thread(target=self.battery_worker, daemon=True).start()
         threading.Thread(target=self.disk_worker, daemon=True).start()
         if Flask: threading.Thread(target=self.web_server_worker, daemon=True).start()
+
+    def load_user_state(self) -> None:
+        """Load persisted user preferences from PROFILE_FILE when available."""
+        if not PROFILE_FILE.exists():
+            return
+        try:
+            data = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
+            self.raw_enabled = bool(data.get("raw_enabled", self.raw_enabled))
+            self.peaking_enabled = bool(data.get("peaking_enabled", self.peaking_enabled))
+            self.auto_sync_enabled = bool(data.get("auto_sync_enabled", self.auto_sync_enabled))
+            self.awb_locked = bool(data.get("awb_locked", self.awb_locked))
+            self.self_timer_delay = int(data.get("self_timer_delay", self.self_timer_delay))
+            self.auto_exposure = bool(data.get("auto_exposure", self.auto_exposure))
+            profile_name = data.get("color_profile", self.color_profile)
+            if isinstance(profile_name, str):
+                self.apply_color_profile(profile_name, notify=False)
+            logger.info("Loaded user state from %s", PROFILE_FILE)
+        except (json.JSONDecodeError, OSError, ValueError, TypeError) as exc:
+            logger.warning("Failed to load user state: %s", exc)
+
+    def save_user_state(self) -> None:
+        """Persist user preferences to PROFILE_FILE atomically."""
+        payload = {
+            "raw_enabled": self.raw_enabled,
+            "peaking_enabled": self.peaking_enabled,
+            "auto_sync_enabled": self.auto_sync_enabled,
+            "awb_locked": self.awb_locked,
+            "self_timer_delay": self.self_timer_delay,
+            "auto_exposure": self.auto_exposure,
+            "color_profile": self.color_profile,
+        }
+        tmp_file = PROFILE_FILE.with_suffix(".tmp")
+        try:
+            tmp_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp_file.replace(PROFILE_FILE)
+        except OSError as exc:
+            logger.warning("Failed to save user state: %s", exc)
 
     def setup_encoder(self) -> None:
         """Configure GPIO events for the rotary encoder when available."""
@@ -275,19 +312,39 @@ class CameraApp:
         elif action == "param_up": self.params[self.selected].inc(); self.apply_all_controls()
         elif action == "param_down": self.params[self.selected].dec(); self.apply_all_controls()
         elif action == "next": self.selected = (self.selected+1)%len(self.params)
-        elif action == "toggle_ae": self.auto_exposure = not self.auto_exposure; self.apply_all_controls()
-        elif action == "toggle_awb_lock": self.awb_locked = not self.awb_locked; self.apply_all_controls()
-        elif action == "toggle_raw": self.raw_enabled = not self.raw_enabled
-        elif action == "toggle_peaking": self.peaking_enabled = not self.peaking_enabled
-        elif action == "toggle_sync": self.auto_sync_enabled = not self.auto_sync_enabled
-        elif action == "toggle_timer": self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
+        elif action == "toggle_ae":
+            self.auto_exposure = not self.auto_exposure
+            self.apply_all_controls()
+            self.notify(f"AE {'ON' if self.auto_exposure else 'OFF'}")
+            self.save_user_state()
+        elif action == "toggle_awb_lock":
+            self.awb_locked = not self.awb_locked
+            self.apply_all_controls()
+            self.notify(f"AWB LOCK {'ON' if self.awb_locked else 'OFF'}")
+            self.save_user_state()
+        elif action == "toggle_raw":
+            self.raw_enabled = not self.raw_enabled
+            self.notify(f"RAW {'ON' if self.raw_enabled else 'OFF'}")
+            self.save_user_state()
+        elif action == "toggle_peaking":
+            self.peaking_enabled = not self.peaking_enabled
+            self.notify(f"PEAK {'ON' if self.peaking_enabled else 'OFF'}")
+            self.save_user_state()
+        elif action == "toggle_sync":
+            self.auto_sync_enabled = not self.auto_sync_enabled
+            self.notify(f"SYNC {'ON' if self.auto_sync_enabled else 'OFF'}")
+            self.save_user_state()
+        elif action == "toggle_timer":
+            self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
+            self.notify(f"TIMER {self.self_timer_delay}s" if self.self_timer_delay else "TIMER OFF")
+            self.save_user_state()
         elif action == "menu_next": self.menu_idx = (self.menu_idx+1)%len(self.menu_order)
         elif action == "menu_prev": self.menu_idx = (self.menu_idx-1)%len(self.menu_order)
         elif action == "shutdown":
             self.notify("SHUTDOWN...")
             pygame.display.flip()
             time.sleep(1)
-            os.system("sudo poweroff")
+            subprocess.run(["sudo", "poweroff"], check=False)
         elif action == "quit": raise SystemExit
 
     def current_menu(self): return self.menu_order[self.menu_idx]
@@ -331,6 +388,10 @@ class CameraApp:
         if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px+PREVIEW_W-80, 20))
         if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px+PREVIEW_W-80, 40))
         if self.disk_free_mb > 0: self.screen.blit(self.small.render(f"SD: {self.disk_free_mb/1024:.1f}GB", True, (200,200,200)), (px+10, SCREEN_H-30))
+        if time.time() < self.message_until:
+            # Short transient status line to confirm toggles and failures.
+            msg_surface = self.small.render(self.message, True, (255, 220, 120))
+            self.screen.blit(msg_surface, (px + 10, 55))
         pygame.display.flip()
 
     def disk_worker(self):
@@ -378,11 +439,21 @@ class CameraApp:
         """Expose minimal remote actions over HTTP for local network usage."""
         if Flask is None:
             return
+        allowed_actions = {
+            "capture", "burst", "toggle_video", "gallery",
+            "gal_next", "gal_prev", "gal_quit",
+            "menu_next", "menu_prev", "param_up", "param_down",
+            "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer",
+        }
         app = Flask(__name__)
         @app.route("/")
         def index(): return "PImage Remote <a href='/action/capture'>CAPTURE</a>"
         @app.route("/action/<cmd>")
-        def action(cmd): self.handle_action(cmd); return "OK"
+        def action(cmd):
+            if cmd not in allowed_actions:
+                return "Unsupported action", 400
+            self.handle_action(cmd)
+            return "OK"
         app.run(host="0.0.0.0", port=5000)
 
     def run(self) -> None:
@@ -425,6 +496,7 @@ class CameraApp:
                     self.camera.stop_recording()
                 except Exception:
                     pass
+            self.save_user_state()
             self.camera.stop()
             pygame.quit()
 

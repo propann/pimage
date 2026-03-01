@@ -14,10 +14,11 @@ Logiciel "béton" et complet pour transformer un **Raspberry Pi 4 / CM4** en app
     - **Retardateur** : Délai de 2s, 5s ou 10s avant capture.
 - **Connectivité & Workflow** : 
     - **Auto-Sync Wi-Fi** : Synchronisation automatique via `rsync` en arrière-plan.
-    - **Interface Web Remote** : Flux vidéo live et déclencheur à distance via Flask (port 5000).
+    - **Interface Web Remote** : Déclencheur à distance via Flask (port 5000) avec actions autorisées filtrées.
 - **Interface Intelligente (Shifting UI)** : Le menu tactile bascule à gauche ou à droite pour ne pas masquer le sujet, selon le mode.
 - **Monitoring Système** : Affichage en temps réel du **% Batterie (I2C)** et de la **Température CPU**.
 - **Galerie Native** : Visionneuse d'images fluide intégrée à Pygame (navigation tactile/encodeur).
+- **Robustesse Terrain** : Sauvegarde automatique des préférences utilisateur dans `~/.pimage_profiles.json`.
 
 ---
 
