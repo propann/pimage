@@ -75,6 +75,7 @@ sudo systemctl enable --now pimage.service
 - `sync_photos.sh` : Script de synchronisation Wi-Fi.
 - `PROGRESS.md` : Journal d'avancement détaillé.
 - `GEMINI.md` : Contexte technique pour l'IA.
+- `AGENTS.md` : Guide contributeur (standards code, tests, commits/PR).
 
 ---
 

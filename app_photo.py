@@ -145,14 +145,17 @@ class CameraApp:
         if Flask: threading.Thread(target=self.web_server_worker, daemon=True).start()
 
     def setup_encoder(self) -> None:
-        if GPIO is None: return
+        """Configure GPIO events for the rotary encoder when available."""
+        if GPIO is None:
+            return
         try:
             GPIO.setmode(GPIO.BCM)
             GPIO.setup([ENC_CLK, ENC_DT, ENC_SW], GPIO.IN, pull_up_down=GPIO.PUD_UP)
             GPIO.add_event_detect(ENC_CLK, GPIO.FALLING, callback=self._encoder_callback, bouncetime=5)
             GPIO.add_event_detect(ENC_SW, GPIO.FALLING, callback=self._button_callback, bouncetime=300)
             self.encoder_enabled = True
-        except: pass
+        except Exception as exc:
+            logger.warning("GPIO encoder setup failed: %s", exc)
 
     def _encoder_callback(self, ch):
         if self.gallery_mode: self.handle_action("gal_next" if GPIO.input(ENC_DT) else "gal_prev")
@@ -223,9 +226,12 @@ class CameraApp:
             rect = img.get_rect()
             scale = min(SCREEN_W/rect.width, SCREEN_H/rect.height)
             self.current_image = pygame.transform.scale(img, (int(rect.width*scale), int(rect.height*scale)))
-        except: self.current_image = None
+        except (pygame.error, IndexError, FileNotFoundError) as exc:
+            logger.warning("Failed to load gallery image: %s", exc)
+            self.current_image = None
 
     def handle_action(self, action):
+        """Dispatch UI/keyboard/encoder actions to app state transitions."""
         if action == "capture": self.capture()
         elif action == "burst": self.capture_burst()
         elif action == "toggle_video":
@@ -233,10 +239,20 @@ class CameraApp:
                 if self.disk_free_mb < 200:
                     self.notify("Disk low for video!")
                     return
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                self.camera.start_recording(str(PHOTO_DIR / f"vid_{ts}.mp4"))
-                self.video_active, self.video_start_time = True, time.time()
-            else: self.camera.stop_recording(); self.video_active = False
+                try:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    self.camera.start_recording(str(PHOTO_DIR / f"vid_{ts}.mp4"))
+                    self.video_active, self.video_start_time = True, time.time()
+                except Exception as exc:
+                    logger.error("Failed to start video recording: %s", exc)
+                    self.notify("Video error")
+            else:
+                try:
+                    self.camera.stop_recording()
+                    self.video_active = False
+                except Exception as exc:
+                    logger.error("Failed to stop video recording: %s", exc)
+                    self.notify("Video stop error")
         elif action == "gallery": self.open_gallery()
         elif action == "gal_next": self.gallery_index = (self.gallery_index+1)%len(self.gallery_files); self.load_gallery_image()
         elif action == "gal_prev": self.gallery_index = (self.gallery_index-1)%len(self.gallery_files); self.load_gallery_image()
@@ -266,6 +282,7 @@ class CameraApp:
         elif action == "toggle_sync": self.auto_sync_enabled = not self.auto_sync_enabled
         elif action == "toggle_timer": self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
         elif action == "menu_next": self.menu_idx = (self.menu_idx+1)%len(self.menu_order)
+        elif action == "menu_prev": self.menu_idx = (self.menu_idx-1)%len(self.menu_order)
         elif action == "shutdown":
             self.notify("SHUTDOWN...")
             pygame.display.flip()
@@ -317,32 +334,50 @@ class CameraApp:
         pygame.display.flip()
 
     def disk_worker(self):
+        """Refresh free disk space every minute to protect capture operations."""
         while True:
             try:
                 st = os.statvfs(str(PHOTO_DIR))
                 self.disk_free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
-            except: pass
+            except OSError as exc:
+                logger.warning("Disk stat failed: %s", exc)
             time.sleep(60)
 
     def battery_worker(self):
+        """Read battery percentage from known I2C UPS addresses when available."""
         while True:
             if SMBus:
                 try:
                     with SMBus(1) as bus:
                         for addr, reg in [(0x75, 0x2A), (0x41, 0x24)]:
-                            try: self.battery_percent = float(bus.read_byte_data(addr, reg)); break
-                            except: pass
-                except: pass
+                            try:
+                                self.battery_percent = float(bus.read_byte_data(addr, reg))
+                                break
+                            except OSError:
+                                continue
+                except OSError as exc:
+                    logger.debug("Battery read skipped: %s", exc)
             time.sleep(30)
 
     def sync_worker(self):
+        """Run optional photo sync script in background when auto-sync is enabled."""
         while True:
             if self.auto_sync_enabled:
                 script = Path(__file__).parent / "sync_photos.sh"
-                if script.exists(): self.sync_active = True; subprocess.run([str(script)]); self.sync_active = False
+                if script.exists():
+                    self.sync_active = True
+                    try:
+                        subprocess.run([str(script)], check=False, timeout=120)
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        logger.warning("Sync script failed: %s", exc)
+                    finally:
+                        self.sync_active = False
             time.sleep(60)
 
     def web_server_worker(self):
+        """Expose minimal remote actions over HTTP for local network usage."""
+        if Flask is None:
+            return
         app = Flask(__name__)
         @app.route("/")
         def index(): return "PImage Remote <a href='/action/capture'>CAPTURE</a>"
@@ -377,13 +412,21 @@ class CameraApp:
                 if time.time()-self.last_cpu_check > 5:
                     try:
                         with open('/sys/class/thermal/thermal_zone0/temp') as f: self.cpu_temp = float(f.read())/1000.0
-                    except: pass
+                    except (OSError, ValueError) as exc:
+                        logger.debug("CPU temp read failed: %s", exc)
                     self.last_cpu_check = time.time()
                 frame = self.camera.capture_array()
                 self.last_web_frame = frame.copy()
                 self.draw(frame)
                 self.clock.tick(25)
-        finally: self.camera.stop(); pygame.quit()
+        finally:
+            if self.video_active:
+                try:
+                    self.camera.stop_recording()
+                except Exception:
+                    pass
+            self.camera.stop()
+            pygame.quit()
 
 if __name__ == "__main__":
     app = CameraApp()
