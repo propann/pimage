@@ -51,6 +51,14 @@ nano sync_photos.sh
 python3 app_photo.py
 ```
 
+### Mode sans encodeur (tactile uniquement)
+- L'application reste 100% utilisable au tactile sans encodeur branché.
+- L'encodeur peut être activé/désactivé depuis le menu **SYSTEM** (`ENC ON/OFF`).
+- Pour forcer le démarrage sans encodeur :
+```bash
+PIMAGE_ENCODER=0 python3 app_photo.py
+```
+
 ### Installation du Service (Autostart)
 ```bash
 sudo cp pimage.service /etc/systemd/system/

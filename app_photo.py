@@ -133,6 +133,7 @@ class CameraApp:
         self.disk_free_mb = 0.0
         self.gallery_mode, self.gallery_files, self.gallery_index, self.current_image = False, [], 0, None
         self.message, self.message_until, self.last_capture = "Ready", 0.0, "-"
+        self.encoder_requested = os.getenv("PIMAGE_ENCODER", "1").strip().lower() not in {"0", "false", "off", "no"}
         self.encoder_enabled = False
 
         self.apply_color_profile("natural", notify=False)
@@ -156,6 +157,7 @@ class CameraApp:
             self.awb_locked = bool(data.get("awb_locked", self.awb_locked))
             self.self_timer_delay = int(data.get("self_timer_delay", self.self_timer_delay))
             self.auto_exposure = bool(data.get("auto_exposure", self.auto_exposure))
+            self.encoder_requested = bool(data.get("encoder_requested", self.encoder_requested))
             profile_name = data.get("color_profile", self.color_profile)
             if isinstance(profile_name, str):
                 self.apply_color_profile(profile_name, notify=False)
@@ -172,6 +174,7 @@ class CameraApp:
             "awb_locked": self.awb_locked,
             "self_timer_delay": self.self_timer_delay,
             "auto_exposure": self.auto_exposure,
+            "encoder_requested": self.encoder_requested,
             "color_profile": self.color_profile,
         }
         tmp_file = PROFILE_FILE.with_suffix(".tmp")
@@ -183,7 +186,13 @@ class CameraApp:
 
     def setup_encoder(self) -> None:
         """Configure GPIO events for the rotary encoder when available."""
+        if not self.encoder_requested:
+            self.encoder_enabled = False
+            return
         if GPIO is None:
+            logger.info("Encoder requested but RPi.GPIO is unavailable.")
+            return
+        if self.encoder_enabled:
             return
         try:
             GPIO.setmode(GPIO.BCM)
@@ -193,12 +202,36 @@ class CameraApp:
             self.encoder_enabled = True
         except Exception as exc:
             logger.warning("GPIO encoder setup failed: %s", exc)
+            self.encoder_enabled = False
+
+    def disable_encoder(self) -> None:
+        """Disable encoder GPIO callbacks without impacting touch controls."""
+        if GPIO is None or not self.encoder_enabled:
+            self.encoder_enabled = False
+            return
+        try:
+            GPIO.remove_event_detect(ENC_CLK)
+        except RuntimeError:
+            pass
+        try:
+            GPIO.remove_event_detect(ENC_SW)
+        except RuntimeError:
+            pass
+        try:
+            GPIO.cleanup([ENC_CLK, ENC_DT, ENC_SW])
+        except RuntimeError:
+            pass
+        self.encoder_enabled = False
 
     def _encoder_callback(self, ch):
+        if not self.encoder_enabled or GPIO is None:
+            return
         if self.gallery_mode: self.handle_action("gal_next" if GPIO.input(ENC_DT) else "gal_prev")
         else: self.handle_action("param_up" if GPIO.input(ENC_DT) else "param_down")
 
     def _button_callback(self, ch):
+        if not self.encoder_enabled:
+            return
         if self.gallery_mode: self.handle_action("gal_quit")
         elif self.current_menu() == Menu.CAPTURE: self.handle_action("capture")
         else: self.handle_action("menu_next")
@@ -338,6 +371,15 @@ class CameraApp:
             self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
             self.notify(f"TIMER {self.self_timer_delay}s" if self.self_timer_delay else "TIMER OFF")
             self.save_user_state()
+        elif action == "toggle_encoder":
+            self.encoder_requested = not self.encoder_requested
+            if self.encoder_requested:
+                self.setup_encoder()
+                self.notify("ENC ON" if self.encoder_enabled else "ENC unavailable")
+            else:
+                self.disable_encoder()
+                self.notify("ENC OFF")
+            self.save_user_state()
         elif action == "menu_next": self.menu_idx = (self.menu_idx+1)%len(self.menu_order)
         elif action == "menu_prev": self.menu_idx = (self.menu_idx-1)%len(self.menu_order)
         elif action == "shutdown":
@@ -352,7 +394,9 @@ class CameraApp:
         m = self.current_menu()
         if m == Menu.CAPTURE: return [("CAPTURE", "capture"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("NEXT", "menu_next")]
         if m == Menu.TUNE: return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB LOCK", "toggle_awb_lock"), ("NEXT", "menu_next")]
-        if m == Menu.SYSTEM: return [("GALLERY", "gallery"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("OFF", "shutdown"), ("QUIT", "quit")]
+        if m == Menu.SYSTEM:
+            enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
+            return [("GALLERY", "gallery"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), (enc_label, "toggle_encoder"), ("NEXT", "menu_next"), ("OFF", "shutdown"), ("QUIT", "quit")]
         return [("NEXT", "menu_next")]
 
     def buttons(self):
@@ -443,7 +487,7 @@ class CameraApp:
             "capture", "burst", "toggle_video", "gallery",
             "gal_next", "gal_prev", "gal_quit",
             "menu_next", "menu_prev", "param_up", "param_down",
-            "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer",
+            "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer", "toggle_encoder",
         }
         app = Flask(__name__)
         @app.route("/")
@@ -496,6 +540,7 @@ class CameraApp:
                     self.camera.stop_recording()
                 except Exception:
                     pass
+            self.disable_encoder()
             self.save_user_state()
             self.camera.stop()
             pygame.quit()
