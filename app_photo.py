@@ -48,9 +48,14 @@ except ImportError:
     SMBus = None
 
 try:
-    from flask import Flask
+    from flask import Flask, Response, jsonify, render_template_string, request
 except ImportError:
     Flask = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 SCREEN_W = 800
 SCREEN_H = 480
@@ -143,6 +148,8 @@ class CameraApp:
         self.capture_failures = 0
         self.encoder_requested = os.getenv("PIMAGE_ENCODER", "1").strip().lower() not in {"0", "false", "off", "no"}
         self.encoder_enabled = False
+        self.web_live_enabled = os.getenv("PIMAGE_WEB_LIVE", "0").strip().lower() in {"1", "true", "on", "yes"}
+        self.frame_lock = threading.Lock()
 
         self.apply_color_profile("natural", notify=False)
         self.load_user_state()
@@ -166,6 +173,7 @@ class CameraApp:
             self.self_timer_delay = int(data.get("self_timer_delay", self.self_timer_delay))
             self.auto_exposure = bool(data.get("auto_exposure", self.auto_exposure))
             self.encoder_requested = bool(data.get("encoder_requested", self.encoder_requested))
+            self.web_live_enabled = bool(data.get("web_live_enabled", self.web_live_enabled))
             profile_name = data.get("color_profile", self.color_profile)
             if isinstance(profile_name, str):
                 self.apply_color_profile(profile_name, notify=False)
@@ -183,6 +191,7 @@ class CameraApp:
             "self_timer_delay": self.self_timer_delay,
             "auto_exposure": self.auto_exposure,
             "encoder_requested": self.encoder_requested,
+            "web_live_enabled": self.web_live_enabled,
             "color_profile": self.color_profile,
         }
         tmp_file = PROFILE_FILE.with_suffix(".tmp")
@@ -525,7 +534,7 @@ class CameraApp:
             time.sleep(60)
 
     def web_server_worker(self):
-        """Expose minimal remote actions over HTTP for local network usage."""
+        """Expose a unified web control panel and optional MJPEG live preview."""
         if Flask is None:
             return
         allowed_actions = {
@@ -535,15 +544,202 @@ class CameraApp:
             "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer", "toggle_encoder",
         }
         app = Flask(__name__)
+        page = """
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PImage Remote</title>
+  <style>
+    :root { --bg:#101418; --card:#1b232c; --accent:#00b894; --text:#eef3f8; --muted:#9bb0c4; --warn:#ff7675; }
+    body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1100px; margin:0 auto; padding:16px; display:grid; grid-template-columns: 2fr 1fr; gap:16px; }
+    .card { background:var(--card); border-radius:12px; padding:14px; }
+    h1,h2 { margin:0 0 10px 0; font-weight:700; }
+    h1 { font-size:1.2rem; }
+    h2 { font-size:1rem; color:var(--muted); }
+    .live-wrap { aspect-ratio: 4 / 3; background:#000; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+    #live { width:100%; height:100%; object-fit:contain; background:#000; display:none; }
+    .grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:8px; }
+    button { border:0; border-radius:10px; padding:10px; color:#fff; background:#2c3e50; cursor:pointer; font-weight:600; }
+    button.primary { background:var(--accent); color:#09241f; }
+    button.warn { background:var(--warn); }
+    .state { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px; font-size:.92rem; }
+    .pill { background:#253140; border-radius:8px; padding:8px; }
+    .muted { color:var(--muted); }
+    label { display:flex; align-items:center; gap:8px; }
+    @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h1>Controle PImage</h1>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <label><input id="liveToggle" type="checkbox"> Live view active</label>
+        <span id="statusMsg" class="muted">-</span>
+      </div>
+      <div class="live-wrap">
+        <img id="live" alt="Live preview">
+        <span id="liveOff" class="muted">Live desactive</span>
+      </div>
+      <h2 style="margin-top:14px;">Actions</h2>
+      <div class="grid">
+        <button class="primary" data-action="capture">CAPTURE</button>
+        <button data-action="burst">BURST</button>
+        <button data-action="toggle_video">VIDEO</button>
+        <button data-action="toggle_timer">TIMER</button>
+        <button data-action="gallery">GALLERY</button>
+        <button data-action="gal_quit">EXIT GAL</button>
+        <button data-action="toggle_raw">RAW</button>
+        <button data-action="toggle_peaking">PEAK</button>
+        <button data-action="toggle_sync">SYNC</button>
+        <button data-action="toggle_ae">AE</button>
+        <button data-action="toggle_awb_lock">AWB LOCK</button>
+        <button data-action="toggle_encoder">ENC</button>
+      </div>
+    </section>
+    <aside class="card">
+      <h1>Etat Systeme</h1>
+      <div class="state">
+        <div class="pill">Menu: <b id="stMenu">-</b></div>
+        <div class="pill">Message: <b id="stMessage">-</b></div>
+        <div class="pill">Battery: <b id="stBat">-</b></div>
+        <div class="pill">CPU: <b id="stCpu">-</b></div>
+        <div class="pill">Disk: <b id="stDisk">-</b></div>
+        <div class="pill">Video: <b id="stVideo">-</b></div>
+        <div class="pill">RAW: <b id="stRaw">-</b></div>
+        <div class="pill">Sync: <b id="stSync">-</b></div>
+      </div>
+    </aside>
+  </div>
+  <script>
+    const live = document.getElementById("live");
+    const liveOff = document.getElementById("liveOff");
+    const liveToggle = document.getElementById("liveToggle");
+    const statusMsg = document.getElementById("statusMsg");
+
+    async function api(path, opts={}) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
+    }
+    async function sendAction(action) {
+      statusMsg.textContent = "Action: " + action;
+      try { await api("/api/action/" + action, { method: "POST" }); } catch (e) { statusMsg.textContent = "Erreur: " + e.message; }
+    }
+    function setLive(enabled) {
+      if (enabled) {
+        live.style.display = "block";
+        liveOff.style.display = "none";
+        live.src = "/stream.mjpg?t=" + Date.now();
+      } else {
+        live.style.display = "none";
+        liveOff.style.display = "inline";
+        live.src = "";
+      }
+    }
+    async function toggleLive(enabled) {
+      try {
+        const state = await api("/api/live", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({enabled}) });
+        liveToggle.checked = !!state.web_live_enabled;
+        setLive(!!state.web_live_enabled);
+      } catch (e) {
+        statusMsg.textContent = "Live indisponible: " + e.message;
+        liveToggle.checked = false;
+        setLive(false);
+      }
+    }
+    async function refreshState() {
+      try {
+        const st = await api("/api/state");
+        document.getElementById("stMenu").textContent = st.menu;
+        document.getElementById("stMessage").textContent = st.message;
+        document.getElementById("stBat").textContent = st.battery;
+        document.getElementById("stCpu").textContent = st.cpu_temp;
+        document.getElementById("stDisk").textContent = st.disk;
+        document.getElementById("stVideo").textContent = st.video_active ? "ON" : "OFF";
+        document.getElementById("stRaw").textContent = st.raw_enabled ? "ON" : "OFF";
+        document.getElementById("stSync").textContent = st.sync_enabled ? "ON" : "OFF";
+        liveToggle.checked = !!st.web_live_enabled;
+        if (st.web_live_enabled && !live.src) setLive(true);
+      } catch (e) {
+        statusMsg.textContent = "Etat indisponible";
+      }
+    }
+    for (const btn of document.querySelectorAll("button[data-action]")) {
+      btn.addEventListener("click", () => sendAction(btn.dataset.action));
+    }
+    liveToggle.addEventListener("change", (e) => toggleLive(e.target.checked));
+    refreshState();
+    setInterval(refreshState, 1200);
+  </script>
+</body>
+</html>
+"""
+
+        def state_payload() -> dict:
+            return {
+                "menu": self.current_menu().value,
+                "message": self.message,
+                "battery": f"{int(self.battery_percent)}%" if self.battery_percent >= 0 else "N/A",
+                "cpu_temp": f"{int(self.cpu_temp)}C" if self.cpu_temp > 0 else "N/A",
+                "disk": f"{self.disk_free_mb/1024:.1f}GB" if self.disk_free_mb > 0 else "N/A",
+                "video_active": self.video_active,
+                "raw_enabled": self.raw_enabled,
+                "sync_enabled": self.auto_sync_enabled,
+                "web_live_enabled": self.web_live_enabled,
+            }
+
         @app.route("/")
-        def index(): return "PImage Remote <a href='/action/capture'>CAPTURE</a>"
-        @app.route("/action/<cmd>")
+        def index():
+            return render_template_string(page)
+
+        @app.route("/api/state")
+        def state():
+            return jsonify(state_payload())
+
+        @app.route("/api/action/<cmd>", methods=["POST"])
         def action(cmd):
             if cmd not in allowed_actions:
                 return "Unsupported action", 400
             self.handle_action(cmd)
-            return "OK"
-        app.run(host="0.0.0.0", port=5000)
+            return jsonify({"ok": True, "action": cmd, **state_payload()})
+
+        @app.route("/api/live", methods=["POST"])
+        def live_toggle():
+            data = request.get_json(silent=True) or {}
+            self.web_live_enabled = bool(data.get("enabled", False))
+            self.save_user_state()
+            return jsonify(state_payload())
+
+        @app.route("/stream.mjpg")
+        def stream():
+            if cv2 is None:
+                return "OpenCV missing (python3-opencv)", 503
+
+            def generate():
+                while True:
+                    if not self.web_live_enabled:
+                        time.sleep(0.2)
+                        continue
+                    with self.frame_lock:
+                        frame = None if self.last_web_frame is None else self.last_web_frame.copy()
+                    if frame is None:
+                        time.sleep(0.05)
+                        continue
+                    ok, buf = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                    if not ok:
+                        time.sleep(0.05)
+                        continue
+                    jpg = buf.tobytes()
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
+                    time.sleep(0.04)
+
+            return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+        app.run(host="0.0.0.0", port=5000, threaded=True, use_reloader=False)
 
     def run(self) -> None:
         try:
@@ -586,7 +782,8 @@ class CameraApp:
                         self.notify("Camera unavailable", timeout=3.0)
                         time.sleep(1.0)
                     continue
-                self.last_web_frame = frame.copy()
+                with self.frame_lock:
+                    self.last_web_frame = frame.copy()
                 self.draw(frame)
                 self.clock.tick(25)
         except KeyboardInterrupt:

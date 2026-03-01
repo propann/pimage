@@ -14,7 +14,8 @@ Logiciel "béton" et complet pour transformer un **Raspberry Pi 4 / CM4** en app
     - **Retardateur** : Délai de 2s, 5s ou 10s avant capture.
 - **Connectivité & Workflow** : 
     - **Auto-Sync Wi-Fi** : Synchronisation automatique via `rsync` en arrière-plan.
-    - **Interface Web Remote** : Déclencheur à distance via Flask (port 5000) avec actions autorisées filtrées.
+    - **Interface Web Remote** : Dashboard unique de contrôle sur Flask (port 5000) avec actions autorisées filtrées.
+    - **Live View Web (optionnel)** : Flux MJPEG activable/désactivable depuis le dashboard.
 - **Interface Intelligente (Shifting UI)** : Le menu tactile bascule à gauche ou à droite pour ne pas masquer le sujet, selon le mode.
 - **Monitoring Système** : Affichage en temps réel du **% Batterie (I2C)** et de la **Température CPU**.
 - **Galerie Native** : Visionneuse d'images fluide intégrée à Pygame (navigation tactile/encodeur).
@@ -66,6 +67,16 @@ PIMAGE_ENCODER=0 python3 app_photo.py
 ```bash
 sudo cp pimage.service /etc/systemd/system/
 sudo systemctl enable --now pimage.service
+```
+
+### Interface Web (Contrôle unifié)
+- URL: `http://<IP_DU_PI>:5000`
+- API état: `GET /api/state`
+- API actions: `POST /api/action/<cmd>`
+- Live MJPEG: `GET /stream.mjpg` (activé via le toggle "Live view active")
+- Activation live au démarrage (optionnel):
+```bash
+PIMAGE_WEB_LIVE=1 python3 app_photo.py
 ```
 
 ---
