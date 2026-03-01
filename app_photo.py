@@ -206,7 +206,7 @@ class CameraApp:
 
     def disable_encoder(self) -> None:
         """Disable encoder GPIO callbacks without impacting touch controls."""
-        if GPIO is None or not self.encoder_enabled:
+        if GPIO is None or not getattr(self, "encoder_enabled", False):
             self.encoder_enabled = False
             return
         try:
@@ -235,6 +235,15 @@ class CameraApp:
         if self.gallery_mode: self.handle_action("gal_quit")
         elif self.current_menu() == Menu.CAPTURE: self.handle_action("capture")
         else: self.handle_action("menu_next")
+
+    def handle_encoder_input(self) -> None:
+        """Legacy compatibility hook.
+
+        Older revisions called this method in the main loop for polled encoder
+        handling. Current implementation uses GPIO interrupts, so this is
+        intentionally a no-op.
+        """
+        return
 
     def notify(self, t, timeout=1.6): self.message, self.message_until = t, time.time() + timeout
 
@@ -524,6 +533,7 @@ class CameraApp:
                         if event.key in (pygame.K_SPACE, pygame.K_RETURN): self.handle_action("capture")
                 if self.timelapse_active and time.time()-self.timelapse_last_shot >= self.timelapse_interval: self.capture(); self.timelapse_last_shot = time.time()
                 if self.timer_active and time.time()-self.timer_start_time >= self.self_timer_delay: self.timer_active = False; self.capture(force=True)
+                self.handle_encoder_input()
                 if time.time()-self.last_cpu_check > 5:
                     try:
                         with open('/sys/class/thermal/thermal_zone0/temp') as f: self.cpu_temp = float(f.read())/1000.0
@@ -535,7 +545,7 @@ class CameraApp:
                 self.draw(frame)
                 self.clock.tick(25)
         finally:
-            if self.video_active:
+            if getattr(self, "video_active", False):
                 try:
                     self.camera.stop_recording()
                 except Exception:
@@ -545,6 +555,10 @@ class CameraApp:
             self.camera.stop()
             pygame.quit()
 
-if __name__ == "__main__":
+def main() -> int:
     app = CameraApp()
     app.run()
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
