@@ -8,6 +8,7 @@ Logiciel "béton" pour prototype d'appareil photo CM4 avec écran DSI et contrô
 - **Time-lapse complet**: Nouveau menu dédié pour configurer l'intervalle (1s à 1h). Indicateur visuel "REC" clignotant avec compteur de photos.
 - **Support Pro (RAW & Bracketing)**: Capture simultanée JPG + DNG (RAW) et mode Bracketing d'exposition (3 photos auto).
 - **Aides à la prise de vue**: Histogramme Live et Focus Peaking (surlignage des zones nettes en rouge) en temps réel.
+- **Connectivité & Workflow**: Auto-sync Wi-Fi (rsync), Monitoring batterie I2C et Interface Web (Remote Control via Flask sur le port 5000).
 - **Interface "Shifting"**: Le menu bascule à gauche ou à droite de l'écran (Preview décalée) pour optimiser l'ergonomie (Modes SYSTEM et TIMELAPSE décalés).
 - **Galerie Intégrée**: Lancement d'un diaporama via `fbi` directement depuis l'interface.
 - **Logging Robuste**: Logs persistants dans `~/pimage.log` pour le debug terrain.

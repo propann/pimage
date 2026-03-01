@@ -57,6 +57,13 @@ except ImportError:
     SMBus = None
     logger.warning("smbus2 not found. Battery monitoring via I2C disabled.")
 
+try:
+    from flask import Flask, Response, render_template_string
+    import cv2 # Used for fast JPEG encoding for web stream
+except ImportError:
+    Flask = None
+    logger.warning("Flask or OpenCV not found. Web interface disabled.")
+
 
 SCREEN_W = 800
 SCREEN_H = 480
@@ -181,6 +188,7 @@ class CameraApp:
         self.auto_sync_enabled = False
         self.sync_active = False # Visual feedback for sync running
         self.battery_percent = -1.0 # -1 means no data available
+        self.last_web_frame = None
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -197,6 +205,68 @@ class CameraApp:
         threading.Thread(target=self.sync_worker, daemon=True).start()
         # Start background battery monitor
         threading.Thread(target=self.battery_worker, daemon=True).start()
+        # Start background web server
+        if Flask:
+            threading.Thread(target=self.web_server_worker, daemon=True).start()
+
+    def web_server_worker(self) -> None:
+        """Minimal Flask server for remote control."""
+        app = Flask(__name__)
+        
+        # Inlined HTML for remote control
+        index_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>PImage Remote</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <style>
+                body { background: #111; color: #eee; font-family: sans-serif; text-align: center; margin: 0; }
+                img { width: 100%; max-width: 600px; border: 2px solid #444; margin-top: 10px; }
+                .btn { display: inline-block; padding: 20px 40px; margin: 20px; background: #e60; border-radius: 10px; font-weight: bold; font-size: 24px; cursor: pointer; user-select: none; }
+                .btn:active { background: #f80; }
+                .info { padding: 10px; color: #888; }
+            </style>
+        </head>
+        <body>
+            <h1>PImage Control</h1>
+            <img src="/video_feed">
+            <div class="btn" onclick="fetch('/action/capture')">CAPTURE</div>
+            <div class="info">Appareil Photo CM4 Adaptation</div>
+        </body>
+        </html>
+        """
+
+        @app.route("/")
+        def index(): return render_template_string(index_html)
+
+        @app.route("/video_feed")
+        def video_feed():
+            def gen():
+                while True:
+                    if self.last_web_frame is not None:
+                        # Convert NumPy array to JPEG for MJPEG stream
+                        # We must convert from RGB (pygame) to BGR (opencv)
+                        bgr = cv2.cvtColor(self.last_web_frame, cv2.COLOR_RGB2BGR)
+                        _, buffer = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    time.sleep(0.08) # ~12 FPS for web preview to save CPU
+            return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        @app.route("/action/<cmd>")
+        def action(cmd):
+            if cmd == "capture":
+                self.handle_action("capture")
+                return "OK"
+            return "ERROR"
+
+        # Silence flask logs
+        import logging as py_logging
+        log = py_logging.getLogger('werkzeug')
+        log.setLevel(py_logging.ERROR)
+
+        logger.info("Web server starting on http://0.0.0.0:5000")
+        app.run(host="0.0.0.0", port=5000, threaded=True, debug=False)
 
     def battery_worker(self) -> None:
         """Background thread checking for battery status via I2C."""
@@ -827,6 +897,7 @@ class CameraApp:
                 self.update_timelapse_logic()
 
                 frame = self.camera.capture_array()
+                self.last_web_frame = frame.copy() # Shared for web stream
                 self.draw(frame)
                 self.clock.tick(28)
         finally:

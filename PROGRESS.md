@@ -5,8 +5,8 @@
 | Module | Description | État |
 | :--- | :--- | :--- |
 | **1. Auto-Upload Wi-Fi** | Synchronisation `rsync` automatique en arrière-plan. | ✅ Terminé |
-| **2. Monitoring Batterie** | Affichage du % de batterie (UPS support via I2C). | ⏳ En cours |
-| **3. Interface Web** | Mini serveur Flask pour contrôle smartphone. | ⏳ En attente |
+| **2. Monitoring Batterie** | Affichage du % de batterie (PiSugar/Waveshare I2C). | ✅ Terminé |
+| **3. Interface Web** | Remote control via Flask (Stream + Capture). | ✅ Terminé |
 
 ---
 
@@ -14,7 +14,9 @@
 - [x] Encodeur Rotatif, Shifting UI, Galerie, Service, Time-lapse
 - [x] RAW/DNG, Bracketing, Histogramme, Focus Peaking
 - [x] Auto-sync Wi-Fi (Worker asynchrone + script rsync)
+- [x] Monitoring Batterie via I2C (Generic probe)
+- [x] Interface Web / Télécommande (Flask + OpenCV)
 
 ## 🛠️ À Faire (Prochaines étapes)
-1. Intégrer la lecture batterie via I2C (ex: PiSugar/Waveshare).
-2. Créer l'interface Web (API Flask + Stream).
+1. Ajouter le mode vidéo (Catégorie 3).
+2. Optimisations thermiques et monitoring CPU.
