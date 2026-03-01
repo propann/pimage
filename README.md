@@ -63,6 +63,7 @@ python3 app_photo.py
 PIMAGE_ENCODER=0 python3 app_photo.py
 ```
 - Rotation d'affichage (optionnel): `PIMAGE_ROTATE=0|90|180|270` (défaut: `90`, rotation gauche)
+- Rotation labels menu (optionnel): `PIMAGE_MENU_ROTATE=0|90|-90|180`
 - UI tactile: boutons transparents sur les bords + bouton central de capture.
 - Nombre de boutons par côté (optionnel): `PIMAGE_BTNS_SIDE=2|3|4` (défaut: `3`).
 

@@ -116,6 +116,9 @@ class CameraApp:
         self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "90"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
+        self.menu_label_rotation = int(os.getenv("PIMAGE_MENU_ROTATE", "0"))
+        if self.menu_label_rotation not in {0, 90, -90, 180, 270}:
+            self.menu_label_rotation = 0
         self.edge_buttons_per_side = max(2, min(4, int(os.getenv("PIMAGE_BTNS_SIDE", "3"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
@@ -539,9 +542,10 @@ class CameraApp:
                 btn.fill((20, 30, 40, 100))
                 self.screen.blit(btn, (r.x, r.y))
                 pygame.draw.rect(self.screen, (180, 220, 255, 130), r, width=1, border_radius=8)
-                # Rotate labels based on side so text reads toward image center.
+                # Keep labels horizontal by default; configurable via env if needed.
                 label = self.small.render(t, True, (240, 240, 240))
-                label = pygame.transform.rotate(label, -90 if r.centerx < (self.screen_w // 2) else 90)
+                if self.menu_label_rotation:
+                    label = pygame.transform.rotate(label, self.menu_label_rotation)
                 self.screen.blit(label, label.get_rect(center=r.center))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
         top_info = []
