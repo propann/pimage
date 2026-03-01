@@ -531,6 +531,23 @@ class CameraApp:
             self.screen.blit(msg_surface, (px + 10, 55))
         pygame.display.flip()
 
+    def handle_pointer_press(self, x: int, y: int) -> None:
+        """Handle touchscreen/mouse press using pixel coordinates."""
+        if self.gallery_mode:
+            if y < 50 and x > self.screen_w - 100:
+                self.handle_action("gal_quit")
+            elif y > self.screen_h - 60 and x > self.screen_w - 120:
+                self.handle_action("gal_delete")
+            elif x < self.screen_w // 2:
+                self.handle_action("gal_prev")
+            else:
+                self.handle_action("gal_next")
+            return
+        for r, _, a in self.buttons():
+            if r.collidepoint((x, y)):
+                self.handle_action(a)
+                return
+
     def disk_worker(self):
         """Refresh free disk space every minute to protect capture operations."""
         while True:
@@ -787,15 +804,11 @@ class CameraApp:
                     if event.type == pygame.QUIT: raise SystemExit
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: raise SystemExit
                     if event.type == pygame.MOUSEBUTTONDOWN:
-                        if self.gallery_mode:
-                            x, y = event.pos
-                            if y < 50 and x > self.screen_w - 100: self.handle_action("gal_quit")
-                            elif y > self.screen_h - 60 and x > self.screen_w - 120: self.handle_action("gal_delete")
-                            elif x < self.screen_w // 2: self.handle_action("gal_prev")
-                            else: self.handle_action("gal_next")
-                        else:
-                            for r, t, a in self.buttons():
-                                if r.collidepoint(event.pos): self.handle_action(a)
+                        self.handle_pointer_press(*event.pos)
+                    if event.type == pygame.FINGERDOWN:
+                        tx = int(event.x * self.screen_w)
+                        ty = int(event.y * self.screen_h)
+                        self.handle_pointer_press(tx, ty)
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_LEFT: self.handle_action("gal_prev" if self.gallery_mode else "menu_prev")
                         if event.key == pygame.K_RIGHT: self.handle_action("gal_next" if self.gallery_mode else "menu_next")
