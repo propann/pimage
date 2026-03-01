@@ -51,6 +51,12 @@ except ImportError:
     GPIO = None
     logger.warning("RPi.GPIO not found. Physical controls disabled.")
 
+try:
+    from smbus2 import SMBus
+except ImportError:
+    SMBus = None
+    logger.warning("smbus2 not found. Battery monitoring via I2C disabled.")
+
 
 SCREEN_W = 800
 SCREEN_H = 480
@@ -174,6 +180,7 @@ class CameraApp:
         self.peaking_enabled = False
         self.auto_sync_enabled = False
         self.sync_active = False # Visual feedback for sync running
+        self.battery_percent = -1.0 # -1 means no data available
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -188,6 +195,31 @@ class CameraApp:
         
         # Start background sync monitor
         threading.Thread(target=self.sync_worker, daemon=True).start()
+        # Start background battery monitor
+        threading.Thread(target=self.battery_worker, daemon=True).start()
+
+    def battery_worker(self) -> None:
+        """Background thread checking for battery status via I2C."""
+        while True:
+            if SMBus is not None:
+                try:
+                    with SMBus(1) as bus:
+                        # Probe common addresses: PiSugar (0x75), Waveshare (0x41)
+                        # Address 0x75, Register 0x2A for PiSugar
+                        # Address 0x41, Register 0x24 for Waveshare
+                        for addr, reg in [(0x75, 0x2A), (0x41, 0x24)]:
+                            try:
+                                percent = bus.read_byte_data(addr, reg)
+                                if 1 <= percent <= 100:
+                                    self.battery_percent = float(percent)
+                                    break # Found one that works
+                            except:
+                                continue
+                except Exception as e:
+                    logger.debug(f"Battery I2C probe failed: {e}")
+            
+            # Update battery every 30 seconds
+            time.sleep(30)
 
     def sync_worker(self) -> None:
         """Background thread checking for network and syncing photos."""
@@ -675,6 +707,26 @@ class CameraApp:
             pygame.draw.circle(self.screen, (0, 120, 255), (preview_x + PREVIEW_W - 30, 30), 8)
             txt = self.small.render("SYNC", True, (0, 120, 255))
             self.screen.blit(txt, (preview_x + PREVIEW_W - 85, 18))
+
+        # Draw Battery indicator
+        if self.battery_percent >= 0:
+            bat_x = preview_x + PREVIEW_W - 30
+            if self.sync_active: bat_x -= 100 # Offset if sync is also visible
+            
+            # Battery body
+            pygame.draw.rect(self.screen, (200, 200, 200), (bat_x - 30, 20, 40, 20), 2)
+            pygame.draw.rect(self.screen, (200, 200, 200), (bat_x + 10, 25, 4, 10))
+            
+            # Fill level
+            color = (0, 255, 0) # Green
+            if self.battery_percent <= 20: color = (255, 0, 0) # Red
+            elif self.battery_percent <= 50: color = (255, 165, 0) # Orange
+            
+            fill_w = int((self.battery_percent / 100.0) * 36)
+            pygame.draw.rect(self.screen, color, (bat_x - 28, 22, fill_w, 16))
+            
+            txt = self.small.render(f"{int(self.battery_percent)}%", True, (255, 255, 255))
+            self.screen.blit(txt, (bat_x - 75, 18))
 
         # Draw Panel
         panel_rect = pygame.Rect(panel_x, 0, PANEL_W, SCREEN_H)
