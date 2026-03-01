@@ -168,6 +168,9 @@ class CameraApp:
         self.timelapse_interval = 5.0  # seconds
         self.timelapse_last_shot = 0.0
         self.timelapse_count = 0
+        self.raw_enabled = False
+        self.bracketing_enabled = False
+        self.peaking_enabled = False
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -320,6 +323,23 @@ class CameraApp:
             out[:, :, 1] = np.clip((lum - 16) * 1.7, 0, 255)
             out[:, :, 2] = np.clip(255 - lum * 1.2, 0, 255)
 
+        # Apply Focus Peaking (High-pass filter for edge detection)
+        if self.peaking_enabled:
+            # Grayscale for edge detection
+            lum = (out[:, :, 0] + out[:, :, 1] + out[:, :, 2]) / 3.0
+            # Simple 3x3 Laplacian kernel approximation for speed
+            # edges = abs(lum[1:-1, 1:-1] * 4 - lum[0:-2, 1:-1] - lum[2:, 1:-1] - lum[1:-1, 0:-2] - lum[1:-1, 2:])
+            # Faster version: horizontal & vertical diffs
+            dx = np.abs(lum[1:-1, 1:-1] - lum[1:-1, :-2])
+            dy = np.abs(lum[1:-1, 1:-1] - lum[:-2, 1:-1])
+            edges = dx + dy
+            
+            # Threshold to find sharpest edges
+            mask = edges > 30 
+            # Highlight edges in RED on the original 'out' array
+            # Adjusting indexing because edges is smaller (reduced by 2 pixels)
+            out[1:-1, 1:-1][mask] = [255, 0, 0]
+
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def draw_grid(self) -> None:
@@ -371,12 +391,43 @@ class CameraApp:
 
     def capture(self) -> None:
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = PHOTO_DIR / f"img_{ts}.jpg"
-            self.camera.capture_file(str(path))
-            self.last_capture = path.name
-            logger.info(f"Photo captured: {path}")
-            self.notify(f"Saved {path.name}", timeout=2.2)
+            ts_base = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ev_steps = [-1.0, 0.0, 1.0] if self.bracketing_enabled else [0.0]
+            
+            # Save original EV if we are bracketing
+            original_ev = 0.0
+            for p in self.params:
+                if p.key == "ExposureValue":
+                    original_ev = p.value
+                    break
+
+            for i, ev_offset in enumerate(ev_steps):
+                ts = f"{ts_base}_{i}" if self.bracketing_enabled else ts_base
+                jpg_path = PHOTO_DIR / f"img_{ts}.jpg"
+                
+                # Apply EV for this bracket shot
+                if self.bracketing_enabled:
+                    self.camera.set_controls({"ExposureValue": original_ev + ev_offset})
+                    time.sleep(0.1) # Small delay for sensor to adapt
+                
+                # Capture JPG
+                self.camera.capture_file(str(jpg_path))
+                self.last_capture = jpg_path.name
+                
+                # Capture RAW if enabled
+                if self.raw_enabled:
+                    dng_path = PHOTO_DIR / f"img_{ts}.dng"
+                    self.camera.capture_file(str(dng_path), format="dng")
+
+            # Restore original EV
+            if self.bracketing_enabled:
+                self.camera.set_controls({"ExposureValue": original_ev})
+                self.notify(f"Bracketed 3 shots: {ts_base}")
+            else:
+                self.notify(f"Saved: {self.last_capture}")
+
+            logger.info(f"Capture sequence finished: {ts_base} (Bracket={self.bracketing_enabled})")
+
         except Exception as e:
             logger.error(f"Capture failed: {e}")
             self.notify("Capture Error")
@@ -421,6 +472,9 @@ class CameraApp:
             self.auto_exposure = not self.auto_exposure
             self.apply_all_controls()
             self.notify(f"AE {'ON' if self.auto_exposure else 'OFF'}")
+        elif action == "toggle_bracketing":
+            self.bracketing_enabled = not self.bracketing_enabled
+            self.notify(f"Bracketing {'ON' if self.bracketing_enabled else 'OFF'}")
         elif action == "next_awb":
             self.awb_mode_idx = (self.awb_mode_idx + 1) % len(self.awb_modes)
             self.apply_all_controls()
@@ -455,6 +509,12 @@ class CameraApp:
             self.menu_idx = (self.menu_idx + 1) % len(self.menu_order)
         elif action == "menu_prev":
             self.menu_idx = (self.menu_idx - 1) % len(self.menu_order)
+        elif action == "toggle_raw":
+            self.raw_enabled = not self.raw_enabled
+            self.notify(f"RAW (DNG) {'ON' if self.raw_enabled else 'OFF'}")
+        elif action == "toggle_peaking":
+            self.peaking_enabled = not self.peaking_enabled
+            self.notify(f"Focus Peaking {'ON' if self.peaking_enabled else 'OFF'}")
         elif action.startswith("save:"):
             self.save_profile(action.split(":", 1)[1])
         elif action.startswith("load:"):
@@ -475,6 +535,7 @@ class CameraApp:
                 ("PARAM +", "param_up"),
                 ("PARAM NEXT", "next"),
                 ("AE ON/OFF", "toggle_ae"),
+                (f"BRACKET: {'ON' if self.bracketing_enabled else 'OFF'}", "toggle_bracketing"),
                 ("AWB NEXT", "next_awb"),
                 ("NEXT MENU", "menu_next"),
             ]
@@ -505,6 +566,8 @@ class CameraApp:
             ]
         return [
             ("GALLERY", "gallery"),
+            (f"RAW: {'ON' if self.raw_enabled else 'OFF'}", "toggle_raw"),
+            (f"PEAK: {'ON' if self.peaking_enabled else 'OFF'}", "toggle_peaking"),
             ("SAVE SLOT C", "save:C"),
             ("LOAD SLOT C", "load:C"),
             ("NEXT MENU", "menu_next"),
@@ -537,6 +600,27 @@ class CameraApp:
             self.timelapse_count += 1
             self.timelapse_last_shot = now
 
+    def draw_histogram(self, frame: np.ndarray, x: int, y: int) -> None:
+        # Calculate luminance (simple average or ITU-R 601)
+        # Using simple average for speed on RPi
+        lum = (frame[:, :, 0].astype(np.uint16) + frame[:, :, 1] + frame[:, :, 2]) // 3
+        hist = np.bincount(lum.flatten(), minlength=256)
+        
+        # Normalize for display (height = 60px)
+        h_max = np.max(hist) if np.max(hist) > 0 else 1
+        hist_norm = (hist * 60) // h_max
+        
+        # Draw background
+        hist_w, hist_h = 256, 60
+        bg = pygame.Surface((hist_w, hist_h), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 140))
+        self.screen.blit(bg, (x, y))
+        
+        # Draw bars
+        for i in range(256):
+            if hist_norm[i] > 0:
+                pygame.draw.line(self.screen, (255, 255, 255, 180), (x + i, y + hist_h), (x + i, y + hist_h - hist_norm[i]))
+
     def draw(self, frame: np.ndarray) -> None:
         is_left_panel = (self.current_menu() == Menu.SYSTEM or self.current_menu() == Menu.TIMELAPSE)
         preview_x = PANEL_W if is_left_panel else 0
@@ -551,6 +635,7 @@ class CameraApp:
         # Draw Preview
         self.screen.blit(surf, (preview_x, 0))
         self.draw_grid_shifted(preview_x)
+        self.draw_histogram(frame, preview_x + PREVIEW_W - 266, SCREEN_H - 70)
 
         # Draw REC indicator for timelapse
         if self.timelapse_active and (int(time.time() * 2) % 2 == 0):
