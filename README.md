@@ -1,154 +1,84 @@
-# pimage
+# pimage - Freelance CM4 Pro Edition 📸
 
-Mini application photo orientée Raspberry Pi 4 / CM4 + écran tactile DSI.
+Logiciel "béton" et complet pour transformer un **Raspberry Pi 4 / CM4** en appareil photo créatif autonome avec écran tactile DSI 7" et contrôles physiques.
 
-## Vision du projet
+## 🌟 Points Forts (Édition Pro)
 
-`pimage` transforme un Raspberry Pi en **appareil photo créatif autonome**:
-- interface plein écran tactile,
-- workflow orienté terrain (capture rapide + profils),
-- réglages photo manuels et styles visuels temps réel.
-
-Le but est d'avoir une base solide pour un boîtier custom (CM4 + capteur CSI + écran 800x480).
-
-## Fonctionnalités actuelles
-
-### 1) Capture + interface
-- Preview live plein écran via **Picamera2**.
-- UI tactile Pygame avec gros boutons adaptés à un écran DSI.
-- Capture photo JPG dans `~/photos`.
-
-### 2) Menus de configuration
-L'interface est organisée en **menus**:
-- `Capture`
-- `Tune`
-- `Color`
-- `Effect`
-- `System`
-
-Cela permet d'utiliser la caméra comme un appareil avec modes dédiés plutôt qu'une simple liste de boutons.
-
-### 3) Contrôle caméra
-Réglages disponibles:
-- Exposure Value
-- Analogue Gain
-- Brightness
-- Contrast
-- Saturation
-- Sharpness
-- ExposureTime (manuel si AE OFF)
-- AE ON/OFF
-- AWB presets (auto/tungsten/fluo/indoor/daylight/cloudy)
-
-### 4) Profils couleur
-Profils intégrés:
-- `natural`
-- `vivid`
-- `cinema`
-- `mono`
-- `retro`
-
-Chaque profil applique une signature colorimétrique cohérente.
-
-### 5) Effets créatifs live
-Effets de preview:
-- `none`
-- `noir`
-- `vintage`
-- `cyber`
-- `thermal`
-
-> Note: les effets sont appliqués sur le flux de preview, pas comme pipeline ISP officiel.
-
-### 6) Grilles d'aide au cadrage
-Sélecteur de grilles directement dans les menus `Capture`, `Effect` et `System`:
-- `off`
-- `thirds` (règle des tiers)
-- `quarters` (4 lignes d'aide principales)
-- `crosshair`
-- `diagonal-x`
-- `triangles`
-- `golden-phi`
-- `dense-6x6`
-
-### 7) Profils utilisateur persistants
-- Sauvegarde/chargement de slots `A/B/C`
-- Fichier: `~/.pimage_profiles.json`
-
-Pratique pour basculer entre configurations de prises de vues (jour, nuit, portrait, style artistique, etc.).
-
-### 8) Analyse matérielle runtime
-Au lancement, l'app récupère un résumé matériel depuis Picamera2:
-- modèle capteur (si exposé)
-- nombre de contrôles caméra disponibles
-
-Ce résumé est affiché en overlay pour aider le tuning matériel.
+- **Contrôle Physique Complet** : Support de l'encodeur rotatif (BCM 17, 18) et bouton de capture (BCM 27) via interruptions GPIO.
+- **Support Pro Photo** : Capture simultanée JPG + **RAW (DNG)** et mode **Bracketing d'exposition** (3 photos auto à -1, 0, +1 EV).
+- **Aides à la Prise de Vue** : **Histogramme Live** (luminance) et **Focus Peaking** (surlignage rouge des zones nettes) en temps réel.
+- **Modes Créatifs** : 
+    - **Vidéo** : Enregistrement H.264 (.mp4) avec timer et indicateur REC.
+    - **Rafale (Burst)** : Séquences rapides de 5, 10 ou 20 images.
+    - **Time-lapse** : Intervalle réglable de 1s à 1h avec compteur.
+    - **Retardateur** : Délai de 2s, 5s ou 10s avant capture.
+- **Connectivité & Workflow** : 
+    - **Auto-Sync Wi-Fi** : Synchronisation automatique via `rsync` en arrière-plan.
+    - **Interface Web Remote** : Flux vidéo live et déclencheur à distance via Flask (port 5000).
+- **Interface Intelligente (Shifting UI)** : Le menu tactile bascule à gauche ou à droite pour ne pas masquer le sujet, selon le mode.
+- **Monitoring Système** : Affichage en temps réel du **% Batterie (I2C)** et de la **Température CPU**.
+- **Galerie Native** : Visionneuse d'images fluide intégrée à Pygame (navigation tactile/encodeur).
 
 ---
 
-## Installation (Raspberry Pi OS Bookworm)
+## 🛠️ Installation (Raspberry Pi OS Bookworm)
 
+### 1. Dépendances système
 ```bash
 sudo apt update
-sudo apt install -y python3-picamera2 python3-pygame python3-numpy
+sudo apt install -y python3-picamera2 python3-pygame python3-numpy python3-flask python3-opencv python3-smbus2 fbi rsync
 ```
 
-## Lancer l'app
+### 2. Cloner le projet
+```bash
+git clone https://github.com/votre-username/pimage.git
+cd pimage
+git checkout freelance-cm4-adaptation
+```
+
+### 3. Configurer l'Auto-Sync (Optionnel)
+Modifie `sync_photos.sh` avec l'adresse IP de ton serveur de destination :
+```bash
+nano sync_photos.sh
+```
+
+---
+
+## 🚀 Lancer l'Application
 
 ```bash
 python3 app_photo.py
 ```
 
-## Contrôles clavier (debug)
-
-- `Space`/`Enter`: capture
-- `↑`/`↓`: paramètre +/-
-- `←`/`→`: menu précédent/suivant
-- `a`: auto exposure ON/OFF
-- `w`: AWB suivant
-- `p`: profil couleur suivant
-- `e`: effet suivant
-- `g`: grille suivante
-- `Esc`: quitter
+### Installation du Service (Autostart)
+```bash
+sudo cp pimage.service /etc/systemd/system/
+sudo systemctl enable --now pimage.service
+```
 
 ---
 
-## Étude rapide des possibilités hardware (RPi4/CM4)
+## 🎹 Contrôles
 
-### Ce que le matériel permet bien
-- Appareil photo embarqué compact basse conso.
-- Démarrage rapide, usage kiosque, écran tactile direct.
-- Contrôle ISP via Picamera2 (expo, gains, couleurs, netteté).
-- Pipeline extensible Python (post-traitements, UI custom, logique métier).
-
-### Axes d'évolution réalistes
-1. **Gestion stockage robuste**
-   - auto-rotation, nettoyage quota, export USB/Wi‑Fi.
-2. **Workflow photo avancé**
-   - rafale, retardateur, bracketing expo, histogramme live.
-3. **Color science**
-   - profils caméra par capteur/lentille, LUT 3D, matching look-cinéma.
-4. **Expérience appareil complet**
-   - battery HUD (I2C), boutons GPIO physiques, mode galerie.
-5. **Qualité image**
-   - calibration optique, gestion bruit ISO, anti-flicker, verrouillage expo/AWB précis.
-
-### Limites typiques à anticiper
-- Performances CPU/GPU si effets lourds en Python pur.
-- Capteurs CSI très variables (latence, rolling shutter, dynamique).
-- Contraintes thermiques en boîtier fermé.
+| Action | Contrôle Physique | Clavier (Debug) |
+| :--- | :--- | :--- |
+| **Capturer** | Clic Encodeur (Menu Capture) | `Espace` / `Entrée` |
+| **Naviguer Menu** | Clic Encodeur (Autres Menus) | `Flèches Gauche/Droite` |
+| **Régler Paramètre**| Rotation Encodeur | `Flèches Haut/Bas` |
+| **Quitter Galerie** | Clic Encodeur | `Echap` |
 
 ---
 
-## Notes hardware
+## 📁 Structure du Projet
+- `app_photo.py` : Cœur de l'application (multithreadé).
+- `pimage.service` : Configuration pour le démarrage automatique.
+- `sync_photos.sh` : Script de synchronisation Wi-Fi.
+- `PROGRESS.md` : Journal d'avancement détaillé.
+- `GEMINI.md` : Contexte technique pour l'IA.
 
-- Pensé pour écran 800x480 en paysage.
-- Panneau de contrôle à droite, preview caméra à gauche.
-- Sauvegarde locale recommandée sur stockage fiable (overlay fs désactivé recommandé).
+---
 
-## Idées “fou-fou” pour la suite
-
-- Mode **"Dream Scanner"**: effet génératif piloté par capteur IMU/GPIO.
-- Profils automatiques selon heure/lumière (day/night adaptation).
-- Capture + style + impression instantanée (ESC/POS).
-- Passage en mode “studio” avec contrôle remote via WebSocket.
+## 📝 Notes Hardware
+- **Écran** : Optimisé pour 800x480 (DSI 7").
+- **Batterie** : Support générique I2C (testé avec PiSugar et Waveshare UPS).
+- **Température** : Surveillance recommandée pour le CM4 en boîtier fermé.
