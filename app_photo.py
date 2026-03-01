@@ -99,7 +99,7 @@ COLOR_PROFILES: Dict[str, Dict[str, float]] = {
     "retro": {"Saturation": 1.2, "Contrast": 0.88, "Sharpness": 0.5, "Brightness": 0.12},
 }
 
-EFFECTS = ["none", "noir", "vintage", "cyber", "thermal"]
+EFFECTS = ["none", "noir", "vintage", "cool", "cyber", "thermal", "glitch"]
 GRIDS = ["off", "thirds", "quarters", "crosshair", "diagonal-x", "golden-phi"]
 
 class CameraApp:
@@ -112,14 +112,14 @@ class CameraApp:
         self.panel_w = max(150, min(260, self.screen_w // 4))
         self.preview_w = self.screen_w
         self.menu_x = max(8, int(self.screen_w * 0.25) - (self.panel_w // 2))
-        # Default to 90° left rotation for landscape-mounted displays.
-        self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "90"))
+        # Default rotation is 0; set PIMAGE_ROTATE if the Linux display is not oriented correctly.
+        self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "0"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
         self.menu_label_rotation = int(os.getenv("PIMAGE_MENU_ROTATE", "0"))
         if self.menu_label_rotation not in {0, 90, -90, 180, 270}:
             self.menu_label_rotation = 0
-        self.edge_buttons_per_side = max(2, min(4, int(os.getenv("PIMAGE_BTNS_SIDE", "3"))))
+        self.edge_buttons_per_side = max(2, min(6, int(os.getenv("PIMAGE_BTNS_SIDE", "6"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
@@ -162,6 +162,11 @@ class CameraApp:
         self.cpu_temp, self.last_cpu_check, self.last_web_frame = 0.0, 0.0, None
         self.disk_free_mb = 0.0
         self.gallery_mode, self.gallery_files, self.gallery_index, self.current_image = False, [], 0, None
+        self.gallery_base_image = None
+        self.gallery_zoom, self.gallery_angle = 1.0, 0.0
+        self.active_touches: Dict[int, Tuple[float, float]] = {}
+        self.touch_taps: Dict[int, Tuple[float, float, float]] = {}
+        self.gesture_baseline = None
         self.message, self.message_until, self.last_capture = "Ready", 0.0, "-"
         self.capture_failures = 0
         self.encoder_requested = os.getenv("PIMAGE_ENCODER", "1").strip().lower() not in {"0", "false", "off", "no"}
@@ -192,6 +197,7 @@ class CameraApp:
             self.auto_exposure = bool(data.get("auto_exposure", self.auto_exposure))
             self.encoder_requested = bool(data.get("encoder_requested", self.encoder_requested))
             self.web_live_enabled = bool(data.get("web_live_enabled", self.web_live_enabled))
+            self.effect_idx = int(data.get("effect_idx", self.effect_idx)) % len(EFFECTS)
             profile_name = data.get("color_profile", self.color_profile)
             if isinstance(profile_name, str):
                 self.apply_color_profile(profile_name, notify=False)
@@ -210,6 +216,7 @@ class CameraApp:
             "auto_exposure": self.auto_exposure,
             "encoder_requested": self.encoder_requested,
             "web_live_enabled": self.web_live_enabled,
+            "effect_idx": self.effect_idx,
             "color_profile": self.color_profile,
         }
         tmp_file = PROFILE_FILE.with_suffix(".tmp")
@@ -362,12 +369,16 @@ class CameraApp:
     def load_gallery_image(self):
         try:
             img = pygame.image.load(str(self.gallery_files[self.gallery_index])).convert()
-            rect = img.get_rect()
-            scale = min(self.screen_w / rect.width, self.screen_h / rect.height)
-            self.current_image = pygame.transform.scale(img, (int(rect.width*scale), int(rect.height*scale)))
+            self.gallery_base_image = img
+            self.gallery_zoom, self.gallery_angle = 1.0, 0.0
+            self.active_touches.clear()
+            self.touch_taps.clear()
+            self.gesture_baseline = None
+            self.current_image = img
         except (pygame.error, IndexError, FileNotFoundError) as exc:
             logger.warning("Failed to load gallery image: %s", exc)
             self.current_image = None
+            self.gallery_base_image = None
 
     def handle_action(self, action):
         """Dispatch UI/keyboard/encoder actions to app state transitions."""
@@ -443,6 +454,20 @@ class CameraApp:
             self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
             self.notify(f"TIMER {self.self_timer_delay}s" if self.self_timer_delay else "TIMER OFF")
             self.save_user_state()
+        elif action == "effect_next":
+            self.effect_idx = (self.effect_idx + 1) % len(EFFECTS)
+            self.notify(f"FX {EFFECTS[self.effect_idx].upper()}")
+            self.save_user_state()
+        elif action == "effect_prev":
+            self.effect_idx = (self.effect_idx - 1) % len(EFFECTS)
+            self.notify(f"FX {EFFECTS[self.effect_idx].upper()}")
+            self.save_user_state()
+        elif action.startswith("effect_set_"):
+            name = action.replace("effect_set_", "", 1)
+            if name in EFFECTS:
+                self.effect_idx = EFFECTS.index(name)
+                self.notify(f"FX {name.upper()}")
+                self.save_user_state()
         elif action == "toggle_encoder":
             self.encoder_requested = not self.encoder_requested
             if self.encoder_requested:
@@ -465,18 +490,18 @@ class CameraApp:
     def menu_buttons(self):
         m = self.current_menu()
         if m == Menu.CAPTURE:
-            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("GALLERY", "gallery"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("GALLERY", "gallery"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("AE", "toggle_ae"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.TUNE:
-            return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("BACK", "menu_prev")]
+            return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("FX+", "effect_next"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.COLOR:
-            return [("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("TIMER", "toggle_timer"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("TIMER", "toggle_timer"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.EFFECT:
-            return [("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("NONE", "effect_set_none"), ("NOIR", "effect_set_noir"), ("VINT", "effect_set_vintage"), ("COOL", "effect_set_cool"), ("CYBER", "effect_set_cyber"), ("THERM", "effect_set_thermal"), ("GLITCH", "effect_set_glitch"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.TIMELAPSE:
-            return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("GALLERY", "gallery"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("FX+", "effect_next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.SYSTEM:
             enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
-            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
+            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("TIMER", "toggle_timer"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
         return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
@@ -485,7 +510,8 @@ class CameraApp:
         rows = max(1, min(self.edge_buttons_per_side, math.ceil(len(actions) / 2)))
         top_y = max(35, int(self.screen_h * 0.15))
         available_h = max(120, self.screen_h - top_y - 140)
-        step = max(BUTTON_H + 10, available_h // max(1, rows))
+        button_h = max(28, min(BUTTON_H, (available_h - (rows - 1) * 8) // max(1, rows)))
+        step = button_h + 8
         left_x = 10
         right_x = self.screen_w - self.panel_w - 10
         edge_buttons = []
@@ -494,7 +520,7 @@ class CameraApp:
             row_idx = idx if side_left else idx - rows
             x = left_x if side_left else right_x
             y = top_y + row_idx * step
-            edge_buttons.append((pygame.Rect(x, y, self.panel_w, BUTTON_H), title, action))
+            edge_buttons.append((pygame.Rect(x, y, self.panel_w, button_h), title, action))
         # Dedicated center shutter button always available on preview.
         shutter_size = min(110, self.screen_h // 5)
         shutter_rect = pygame.Rect(
@@ -508,6 +534,31 @@ class CameraApp:
 
     def apply_effect(self, frame):
         out = frame.astype(np.float32)
+        effect = EFFECTS[self.effect_idx % len(EFFECTS)]
+        if effect == "noir":
+            lum = (0.299 * out[:, :, 0] + 0.587 * out[:, :, 1] + 0.114 * out[:, :, 2])
+            out[:, :, 0] = lum
+            out[:, :, 1] = lum
+            out[:, :, 2] = lum
+        elif effect == "vintage":
+            out[:, :, 0] = np.clip(out[:, :, 0] * 1.10 + 12, 0, 255)
+            out[:, :, 1] = np.clip(out[:, :, 1] * 0.95 + 6, 0, 255)
+            out[:, :, 2] = np.clip(out[:, :, 2] * 0.80, 0, 255)
+        elif effect == "cool":
+            out[:, :, 0] = np.clip(out[:, :, 0] * 0.9, 0, 255)
+            out[:, :, 2] = np.clip(out[:, :, 2] * 1.2 + 8, 0, 255)
+        elif effect == "cyber":
+            out[:, :, 1] = np.clip(out[:, :, 1] * 1.25, 0, 255)
+            out[:, :, 2] = np.clip(out[:, :, 2] * 1.15 + 10, 0, 255)
+        elif effect == "thermal":
+            lum = np.clip((out[:, :, 0] + out[:, :, 1] + out[:, :, 2]) / 3.0, 0, 255)
+            out[:, :, 0] = np.clip((lum - 100) * 2.2, 0, 255)
+            out[:, :, 1] = np.clip((255 - np.abs(lum - 128) * 2.0), 0, 255)
+            out[:, :, 2] = np.clip((180 - lum) * 2.0, 0, 255)
+        elif effect == "glitch":
+            shift = int((time.time() * 35) % 14) - 7
+            out[:, :, 0] = np.roll(out[:, :, 0], shift, axis=1)
+            out[:, :, 2] = np.roll(out[:, :, 2], -shift, axis=0)
         if self.peaking_enabled:
             lum = (out[:,:,0]+out[:,:,1]+out[:,:,2])/3.0
             dx, dy = np.abs(lum[1:-1,1:-1]-lum[1:-1,:-2]), np.abs(lum[1:-1,1:-1]-lum[:-2,1:-1])
@@ -517,8 +568,16 @@ class CameraApp:
     def draw(self, frame):
         if self.gallery_mode:
             self.screen.fill((0,0,0))
-            if self.current_image:
-                self.screen.blit(self.current_image, self.current_image.get_rect(center=(self.screen_w // 2, self.screen_h // 2)))
+            if self.gallery_base_image:
+                rect = self.gallery_base_image.get_rect()
+                base_scale = min(self.screen_w / rect.width, self.screen_h / rect.height)
+                zoom = max(0.5, min(4.0, self.gallery_zoom))
+                w = max(1, int(rect.width * base_scale * zoom))
+                h = max(1, int(rect.height * base_scale * zoom))
+                img = pygame.transform.smoothscale(self.gallery_base_image, (w, h))
+                if abs(self.gallery_angle) > 0.1:
+                    img = pygame.transform.rotate(img, self.gallery_angle)
+                self.screen.blit(img, img.get_rect(center=(self.screen_w // 2, self.screen_h // 2)))
                 # Delete button overlay
                 pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
                 self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
@@ -557,6 +616,8 @@ class CameraApp:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
             self.screen.blit(self.small.render(" | ".join(top_info), True, (235, 235, 235)), (10, 12))
+        fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
+        self.screen.blit(self.small.render(fx_lbl, True, (180, 255, 210)), (self.screen_w - 140, 12))
         if time.time() < self.message_until:
             # Short transient status line to confirm toggles and failures.
             msg_surface = self.small.render(self.message, True, (255, 220, 120))
@@ -579,6 +640,61 @@ class CameraApp:
             if r.collidepoint((x, y)):
                 self.handle_action(a)
                 return
+
+    def _touch_dist_angle(self) -> Tuple[float, float] | None:
+        if len(self.active_touches) < 2:
+            return None
+        points = list(self.active_touches.values())[:2]
+        (x1, y1), (x2, y2) = points
+        dx, dy = (x2 - x1), (y2 - y1)
+        dist = math.hypot(dx, dy)
+        ang = math.degrees(math.atan2(dy, dx))
+        return dist, ang
+
+    def handle_finger_down(self, event) -> None:
+        self.active_touches[event.finger_id] = (event.x, event.y)
+        self.touch_taps[event.finger_id] = (event.x, event.y, time.time())
+        if self.gallery_mode and len(self.active_touches) >= 2:
+            da = self._touch_dist_angle()
+            if da:
+                dist, ang = da
+                self.gesture_baseline = (dist, ang, self.gallery_zoom, self.gallery_angle)
+
+    def handle_finger_up(self, event) -> None:
+        tap = self.touch_taps.pop(event.finger_id, None)
+        self.active_touches.pop(event.finger_id, None)
+        if self.gallery_mode and tap and len(self.active_touches) == 0:
+            x0, y0, t0 = tap
+            if time.time() - t0 < 0.25 and math.hypot(event.x - x0, event.y - y0) < 0.03:
+                self.handle_pointer_press(int(event.x * self.screen_w), int(event.y * self.screen_h))
+        if len(self.active_touches) < 2:
+            self.gesture_baseline = None
+
+    def handle_finger_motion(self, event) -> None:
+        if event.finger_id not in self.active_touches:
+            return
+        self.active_touches[event.finger_id] = (event.x, event.y)
+        tap = self.touch_taps.get(event.finger_id)
+        if tap and math.hypot(event.x - tap[0], event.y - tap[1]) > 0.03:
+            self.touch_taps.pop(event.finger_id, None)
+        if not self.gallery_mode or len(self.active_touches) < 2:
+            return
+        da = self._touch_dist_angle()
+        if not da:
+            return
+        if not self.gesture_baseline:
+            self.gesture_baseline = (*da, self.gallery_zoom, self.gallery_angle)
+            return
+        base_dist, base_ang, zoom0, angle0 = self.gesture_baseline
+        dist, ang = da
+        if base_dist > 0.001:
+            self.gallery_zoom = max(0.5, min(4.0, zoom0 * (dist / base_dist)))
+        d_ang = ang - base_ang
+        if d_ang > 180:
+            d_ang -= 360
+        elif d_ang < -180:
+            d_ang += 360
+        self.gallery_angle = angle0 + d_ang
 
     def disk_worker(self):
         """Refresh free disk space every minute to protect capture operations."""
@@ -630,6 +746,7 @@ class CameraApp:
             "gal_next", "gal_prev", "gal_quit",
             "menu_next", "menu_prev", "param_up", "param_down",
             "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer", "toggle_encoder",
+            "effect_next", "effect_prev",
         }
         app = Flask(__name__)
         page = """
@@ -790,7 +907,7 @@ class CameraApp:
 
         @app.route("/api/action/<cmd>", methods=["POST"])
         def action(cmd):
-            if cmd not in allowed_actions:
+            if cmd not in allowed_actions and not cmd.startswith("effect_set_"):
                 return "Unsupported action", 400
             self.handle_action(cmd)
             return jsonify({"ok": True, "action": cmd, **state_payload()})
@@ -838,9 +955,15 @@ class CameraApp:
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.handle_pointer_press(*event.pos)
                     if event.type == pygame.FINGERDOWN:
-                        tx = int(event.x * self.screen_w)
-                        ty = int(event.y * self.screen_h)
-                        self.handle_pointer_press(tx, ty)
+                        self.handle_finger_down(event)
+                        if not self.gallery_mode:
+                            tx = int(event.x * self.screen_w)
+                            ty = int(event.y * self.screen_h)
+                            self.handle_pointer_press(tx, ty)
+                    if event.type == pygame.FINGERUP:
+                        self.handle_finger_up(event)
+                    if event.type == pygame.FINGERMOTION:
+                        self.handle_finger_motion(event)
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_LEFT: self.handle_action("gal_prev" if self.gallery_mode else "menu_prev")
                         if event.key == pygame.K_RIGHT: self.handle_action("gal_next" if self.gallery_mode else "menu_next")
