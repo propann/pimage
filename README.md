@@ -1,42 +1,47 @@
-# PImage — Appareil photo portable CM4
+# pimage
 
-Repo de départ pour construire un logiciel d'appareil photo **simple, rapide et agréable** inspiré des meilleurs boîtiers, adapté à ton prototype CM4 + écran DSI tactile.
+Mini application photo orientée Raspberry Pi 4 / CM4 + écran tactile DSI.
 
-## Ce qu'il y a dans ce repo
+## Fonctionnalités
 
-- `app_photo.py` : point d'entrée principal.
-- `src/pimage_camera/` : logique du menu et du workflow photo.
-- `dossier_technique/README.md` : topo technique prêt à enrichir avec logs + schémas.
-- `tests/` : tests de la machine d'état du menu.
+- Preview live plein écran via **Picamera2**.
+- UI tactile Pygame avec boutons larges.
+- Capture photo JPG dans `~/photos`.
+- Réglages rapides:
+  - Exposure Value
+  - Analogue Gain
+  - Brightness
+  - Contrast
+  - Saturation
+  - Sharpness
+  - ExposureTime (manuel)
+- Modes AWB (auto/tungsten/fluo/indoor/daylight/cloudy).
+- Presets **glitch**: `acid`, `noir`, `dream`, `burn`, `clean`.
 
-## Vision produit (UX)
-
-- Interface minimaliste: **capture instantanée**, accès rapide galerie, réglages clairs.
-- Navigation hybride tactile + encodeur.
-- Paramètres en premier plan: ISO, shutter, exposure, contrast, saturation.
-- Architecture prête pour ajouter:
-  - preview DRM/Picamera2,
-  - upload WiFi (Dropbox/Drive),
-  - entrées Bluetooth,
-  - profils de rendu ("street", "portrait", "nuit").
-
-## Lancer une démo locale
+## Installation (Raspberry Pi OS Bookworm)
 
 ```bash
-python3 app_photo.py --output-dir photos --demo-steps 8
+sudo apt update
+sudo apt install -y python3-picamera2 python3-pygame
 ```
 
-> Dans cet environnement, le backend est mocké pour permettre le développement sans matériel CM4.
-
-## Tests
+## Lancer l'app
 
 ```bash
-python3 -m pytest -q
+python3 app_photo.py
 ```
 
-## Étapes suivantes recommandées
+### Contrôles clavier (debug)
 
-1. Brancher le vrai backend Picamera2 dans `hardware.py`.
-2. Ajouter l'UI Pygame (layout gauche preview / droite réglages).
-3. Mapper l'encodeur GPIO (17/18/27) sur `rotate()` + `click()`.
-4. Ajouter service systemd + logs boot dans `dossier_technique/`.
+- `Space`/`Enter`: capture
+- `↑`/`↓`: paramètre +/-
+- `←`/`→`: paramètre précédent/suivant
+- `a`: auto exposure ON/OFF
+- `w`: AWB suivant
+- `Esc`: quitter
+
+## Notes hardware
+
+- Pensé pour écran 800x480 en paysage.
+- Le panneau de contrôle est à droite, preview caméra à gauche.
+- Les photos sont sauvegardées en local (overlay fs désactivé recommandé).
