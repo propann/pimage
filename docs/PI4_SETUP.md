@@ -78,3 +78,8 @@ journalctl -u pimage.service -n 100 --no-pager
 - Erreur caméra: fermer tout autre process utilisant `/dev/media*`.
 - Pas de batterie affichée: vérifier câblage I2C/adresse UPS.
 - Encodeur absent: utiliser tactile-only et `ENC OFF`.
+- `Camera frontend has timed out`:
+  - Couper l'alimentation, rebrancher la nappe caméra (sens + verrouillage).
+  - Tester avec une autre nappe CSI courte.
+  - Vérifier une alim stable (5V/3A mini conseillé).
+  - Vérifier qu'aucun autre service ne lit la caméra (`libcamera-hello`, motion, etc.).

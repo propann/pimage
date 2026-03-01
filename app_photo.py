@@ -136,6 +136,7 @@ class CameraApp:
         self.disk_free_mb = 0.0
         self.gallery_mode, self.gallery_files, self.gallery_index, self.current_image = False, [], 0, None
         self.message, self.message_until, self.last_capture = "Ready", 0.0, "-"
+        self.capture_failures = 0
         self.encoder_requested = os.getenv("PIMAGE_ENCODER", "1").strip().lower() not in {"0", "false", "off", "no"}
         self.encoder_enabled = False
 
@@ -206,6 +207,7 @@ class CameraApp:
         except Exception as exc:
             logger.warning("GPIO encoder setup failed: %s", exc)
             self.encoder_enabled = False
+            self.encoder_requested = False
 
     def disable_encoder(self) -> None:
         """Disable encoder GPIO callbacks without impacting touch controls."""
@@ -247,6 +249,23 @@ class CameraApp:
         intentionally a no-op.
         """
         return
+
+    def recover_camera(self) -> bool:
+        """Try to restart camera pipeline after a capture timeout/error."""
+        for attempt in range(1, 4):
+            try:
+                self.camera.stop()
+            except Exception:
+                pass
+            try:
+                self.camera.start()
+                logger.warning("Camera pipeline recovered (attempt %d).", attempt)
+                self.capture_failures = 0
+                return True
+            except Exception as exc:
+                logger.error("Camera restart attempt %d failed: %s", attempt, exc)
+                time.sleep(0.5)
+        return False
 
     def notify(self, t, timeout=1.6): self.message, self.message_until = t, time.time() + timeout
 
@@ -553,10 +572,21 @@ class CameraApp:
                     except (OSError, ValueError) as exc:
                         logger.debug("CPU temp read failed: %s", exc)
                     self.last_cpu_check = time.time()
-                frame = self.camera.capture_array()
+                try:
+                    frame = self.camera.capture_array()
+                except Exception as exc:
+                    self.capture_failures += 1
+                    logger.error("Frame capture failed (%d): %s", self.capture_failures, exc)
+                    self.notify("Camera timeout - retry", timeout=2.0)
+                    if not self.recover_camera():
+                        self.notify("Camera unavailable", timeout=3.0)
+                        time.sleep(1.0)
+                    continue
                 self.last_web_frame = frame.copy()
                 self.draw(frame)
                 self.clock.tick(25)
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user (CTRL+C).")
         finally:
             if getattr(self, "video_active", False):
                 try:
@@ -565,7 +595,10 @@ class CameraApp:
                     pass
             self.disable_encoder()
             self.save_user_state()
-            self.camera.stop()
+            try:
+                self.camera.stop()
+            except BaseException as exc:
+                logger.warning("Camera stop interrupted/failed: %s", exc)
             pygame.quit()
 
 def main() -> int:
