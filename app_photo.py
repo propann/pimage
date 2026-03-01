@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -171,6 +172,8 @@ class CameraApp:
         self.raw_enabled = False
         self.bracketing_enabled = False
         self.peaking_enabled = False
+        self.auto_sync_enabled = False
+        self.sync_active = False # Visual feedback for sync running
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -182,6 +185,29 @@ class CameraApp:
         self.apply_color_profile("natural", notify=False)
         self.apply_all_controls()
         self.setup_encoder()
+        
+        # Start background sync monitor
+        threading.Thread(target=self.sync_worker, daemon=True).start()
+
+    def sync_worker(self) -> None:
+        """Background thread checking for network and syncing photos."""
+        while True:
+            if self.auto_sync_enabled:
+                # Check for network (fast check via ping or just try rsync)
+                try:
+                    # Look for sync script in project dir
+                    script = Path(__file__).parent / "sync_photos.sh"
+                    if script.exists():
+                        self.sync_active = True
+                        # Run sync script (should handle rsync to remote)
+                        subprocess.run([str(script)], check=False, capture_output=True)
+                        self.sync_active = False
+                except Exception as e:
+                    logger.error(f"Sync error: {e}")
+                    self.sync_active = False
+            
+            # Sleep longer between checks (1 minute) to save battery/bandwidth
+            time.sleep(60)
 
     def setup_encoder(self) -> None:
         if GPIO is None:
@@ -566,10 +592,10 @@ class CameraApp:
             ]
         return [
             ("GALLERY", "gallery"),
+            (f"SYNC: {'ON' if self.auto_sync_enabled else 'OFF'}", "toggle_sync"),
             (f"RAW: {'ON' if self.raw_enabled else 'OFF'}", "toggle_raw"),
             (f"PEAK: {'ON' if self.peaking_enabled else 'OFF'}", "toggle_peaking"),
             ("SAVE SLOT C", "save:C"),
-            ("LOAD SLOT C", "load:C"),
             ("NEXT MENU", "menu_next"),
             ("QUIT", "quit"),
         ]
@@ -642,6 +668,13 @@ class CameraApp:
             pygame.draw.circle(self.screen, (255, 0, 0), (preview_x + 30, 30), 10)
             txt = self.small.render(f"TL: {self.timelapse_count}", True, (255, 0, 0))
             self.screen.blit(txt, (preview_x + 50, 18))
+
+        # Draw Sync indicator
+        if self.sync_active:
+            # Blue WiFi icon replacement (simple circle)
+            pygame.draw.circle(self.screen, (0, 120, 255), (preview_x + PREVIEW_W - 30, 30), 8)
+            txt = self.small.render("SYNC", True, (0, 120, 255))
+            self.screen.blit(txt, (preview_x + PREVIEW_W - 85, 18))
 
         # Draw Panel
         panel_rect = pygame.Rect(panel_x, 0, PANEL_W, SCREEN_H)

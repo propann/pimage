@@ -18,8 +18,20 @@
 - [x] Logging & Service Systemd
 - [x] Moteur de Time-lapse complet
 
-## 🛠️ À Faire (Prochaines étapes - Catégorie 2 & 3)
-1. **Auto-Upload Wi-Fi** : Synchronisation automatique des photos.
-2. **Monitoring Batterie** : Affichage du % de batterie (UPS support).
-3. **Focus Peaking Fine-tuning** : Réglage du seuil de sensibilité.
-4. **Mode Vidéo** : Enregistrement de clips MP4.
+## 🎯 Objectif : Pack "Connectivité & Workflow" (Catégorie 2)
+
+| Module | Description | État |
+| :--- | :--- | :--- |
+| **1. Auto-Upload Wi-Fi** | Synchronisation `rsync` dès qu'un réseau est détecté. | ⏳ En cours |
+| **2. Interface Web** | Mini serveur Flask pour contrôle smartphone. | ⏳ En attente |
+| **3. Monitoring Batterie** | Affichage du % de batterie (UPS support). | ⏳ En attente |
+
+---
+
+## ✅ Terminé (Adaptation CM4 & Pro Pack)
+- [x] Encodeur Rotatif, Shifting UI, Galerie, Service, Time-lapse
+- [x] RAW/DNG, Bracketing, Histogramme, Focus Peaking
+
+## 🛠️ À Faire (Prochaines étapes)
+1. Finir la logique de détection réseau & rsync.
+2. Ajouter le mode vidéo (Catégorie 3).
