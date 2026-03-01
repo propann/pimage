@@ -1,37 +1,22 @@
 # Journal d'avancement - PImage Pro Adaptation
 
-## 🎯 Objectif : Pack "Modes Créatifs" (Catégorie 3)
+## 🎯 Objectif : Pack "Robustesse & Précision" (Catégorie 5)
 
 | Module | Description | État |
 | :--- | :--- | :--- |
-| **1. Mode Vidéo** | Enregistrement H.264 (Start/Stop) avec timer. | ✅ Terminé |
-| **2. Mode Rafale** | Capture ultra-rapide (5, 10 ou 20 images). | ✅ Terminé |
+| **1. Gestion Espace Disque** | Alerte et blocage si SD < 500Mo. | ✅ Terminé |
+| **2. Suppression Galerie** | Bouton "Poubelle" pour le tri sur le terrain. | ✅ Terminé |
+| **3. Verrouillage AWB/AE** | Lock des réglages pour cohérence série. | ✅ Terminé |
 
 ---
 
-## ✅ Terminé (Adaptation CM4, Pro Pack & Workflow)
-- [x] Encodeur Rotatif, Shifting UI, Galerie, Service, Time-lapse
-- [x] RAW/DNG, Bracketing, Histogramme, Focus Peaking
-- [x] Auto-sync Wi-Fi, Monitoring Batterie, Interface Web
-- [x] Mode Vidéo (Start/Stop + Timer)
-- [x] Mode Rafale (Séquence rapide programmable)
+## ✅ Terminé (Adaptation CM4 Totale)
+- [x] Hardware (Encodeur, Batterie, CPU, Service)
+- [x] Photo Pro (RAW, Bracketing, Peaking, Histogramme, AWB Lock)
+- [x] Workflow (Sync Wi-Fi, Remote Web, Galerie Native avec Suppression)
+- [x] Modes (Vidéo, Rafale, Time-lapse, Timer)
+- [x] Sécurité (Gestion Espace Disque)
 
-## 🎯 Objectif : Pack "Finitions Pro" (Catégorie 4)
-
-| Module | Description | État |
-| :--- | :--- | :--- |
-| **1. Retardateur** | Timer de 2s, 5s ou 10s avant capture. | ✅ Terminé |
-| **2. Monitoring CPU** | Affichage de la température du CM4. | ✅ Terminé |
-| **3. Galerie Native** | Visionneuse fluide intégrée à Pygame. | ✅ Terminé |
-
----
-
-## ✅ Terminé (Adaptation CM4 Complète !)
-- [x] Encodeur Rotatif, Shifting UI, Service Systemd
-- [x] RAW/DNG, Bracketing, Histogramme, Focus Peaking
-- [x] Auto-sync Wi-Fi, Monitoring Batterie, Interface Web
-- [x] Mode Vidéo, Mode Rafale, Time-lapse, Retardateur
-- [x] Galerie Native Pygame & Monitoring Thermique
-
-## 🚀 Prêt pour le Terrain !
-Le prototype logiciel pour le boîtier CM4 est maintenant un système pro complet et robuste.
+## 🛠️ À Faire (Optimisations futures)
+1. Passage en système de fichiers Read-Only (Overlay FS).
+2. Support des LUTs 3D (.cube).
