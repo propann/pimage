@@ -508,19 +508,20 @@ class CameraApp:
         self.screen.blit(frame_surface, (px, 0))
         for r, t, a in self.buttons():
             if a == "capture":
-                # Central shutter button.
+                # Central shutter button: outer ring only, transparent center.
                 cx, cy = r.center
                 radius = r.width // 2
-                pygame.draw.circle(self.screen, (255, 255, 255, 40), (cx, cy), radius)
                 pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), radius, width=3)
-                pygame.draw.circle(self.screen, (255, 255, 255, 90), (cx, cy), max(12, radius // 3))
             else:
                 # Transparent edge buttons on top of full-screen preview.
                 btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
                 btn.fill((20, 30, 40, 100))
                 self.screen.blit(btn, (r.x, r.y))
                 pygame.draw.rect(self.screen, (180, 220, 255, 130), r, width=1, border_radius=8)
-                self.screen.blit(self.small.render(t, True, (240,240,240)), (r.x+8, r.y+10))
+                # Rotate labels 90° to the left for edge-mounted controls.
+                label = self.small.render(t, True, (240, 240, 240))
+                label = pygame.transform.rotate(label, 90)
+                self.screen.blit(label, label.get_rect(center=r.center))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
         if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px + self.preview_w - 95, 20))
         if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px + self.preview_w - 95, 40))
