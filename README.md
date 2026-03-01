@@ -17,7 +17,6 @@ Le but est d'avoir une base solide pour un boîtier custom (CM4 + capteur CSI + 
 - Preview live plein écran via **Picamera2**.
 - UI tactile Pygame avec gros boutons adaptés à un écran DSI.
 - Capture photo JPG dans `~/photos`.
-- Galerie photo intégrée (navigation, suppression, slideshow).
 
 ### 2) Menus de configuration
 L'interface est organisée en **menus**:
@@ -26,7 +25,6 @@ L'interface est organisée en **menus**:
 - `Color`
 - `Effect`
 - `System`
-- `Gallery` (mode dédié de lecture photos)
 
 Cela permet d'utiliser la caméra comme un appareil avec modes dédiés plutôt qu'une simple liste de boutons.
 
@@ -83,21 +81,8 @@ Pratique pour basculer entre configurations de prises de vues (jour, nuit, portr
 Au lancement, l'app récupère un résumé matériel depuis Picamera2:
 - modèle capteur (si exposé)
 - nombre de contrôles caméra disponibles
-- présence encodeur (`ENC=yes/no`)
 
 Ce résumé est affiché en overlay pour aider le tuning matériel.
-
-### 9) Encodeur GPIO (optionnel)
-Support d'un encodeur rotatif sur GPIO BCM:
-- `CLK=17`
-- `DT=18`
-- `SW=27`
-
-Utilisation:
-- rotation: déplacement focus boutons / photo précédente-suivante en galerie
-- pression: validation action active
-
-Si `RPi.GPIO` n'est pas disponible, l'app continue sans encodeur.
 
 ---
 
@@ -118,14 +103,12 @@ python3 app_photo.py
 
 - `Space`/`Enter`: capture
 - `↑`/`↓`: paramètre +/-
-- `←`/`→`: menu précédent/suivant (ou prev/next photo en galerie)
-- `Backspace`: ouvrir/fermer galerie
-- `Delete`: supprimer photo courante (galerie)
+- `←`/`→`: menu précédent/suivant
 - `a`: auto exposure ON/OFF
 - `w`: AWB suivant
 - `p`: profil couleur suivant
 - `e`: effet suivant
-- `g`: grille suivante (ou retour caméra depuis galerie)
+- `g`: grille suivante
 - `Esc`: quitter
 
 ---
