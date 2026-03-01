@@ -109,6 +109,9 @@ class CameraApp:
         config = self.camera.create_preview_configuration(main={"size": (PREVIEW_W, SCREEN_H), "format": "RGB888"}, buffer_count=3)
         self.camera.configure(config)
         self.camera.start()
+        # Controls exposed by libcamera vary by sensor/driver version.
+        self.supported_controls = set(self.camera.camera_controls.keys())
+        self._unsupported_controls_logged: set[str] = set()
 
         self.params = [
             CameraParam("Expo EV", "ExposureValue", -8.0, 8.0, 0.2, 0.0),
@@ -252,7 +255,14 @@ class CameraApp:
         for p in self.params:
             if p.key == "ExposureTime" and self.auto_exposure: continue
             ctrls[p.key] = int(p.value) if p.key == "ExposureTime" else p.value
-        self.camera.set_controls(ctrls)
+        filtered_ctrls = {}
+        for name, value in ctrls.items():
+            if name in self.supported_controls:
+                filtered_ctrls[name] = value
+            elif name not in self._unsupported_controls_logged:
+                logger.info("Control '%s' unsupported on this camera, skipping.", name)
+                self._unsupported_controls_logged.add(name)
+        self.camera.set_controls(filtered_ctrls)
 
     def apply_color_profile(self, name, notify=True):
         if name not in COLOR_PROFILES: return
@@ -360,6 +370,9 @@ class CameraApp:
             self.notify(f"AE {'ON' if self.auto_exposure else 'OFF'}")
             self.save_user_state()
         elif action == "toggle_awb_lock":
+            if "AwbLocked" not in self.supported_controls:
+                self.notify("AWB LOCK unsupported")
+                return
             self.awb_locked = not self.awb_locked
             self.apply_all_controls()
             self.notify(f"AWB LOCK {'ON' if self.awb_locked else 'OFF'}")
