@@ -17,6 +17,16 @@
 - [x] Monitoring Batterie via I2C (Generic probe)
 - [x] Interface Web / Télécommande (Flask + OpenCV)
 
-## 🛠️ À Faire (Prochaines étapes)
-1. Ajouter le mode vidéo (Catégorie 3).
-2. Optimisations thermiques et monitoring CPU.
+## 🎯 Objectif : Pack "Modes Créatifs" (Catégorie 3)
+
+| Module | Description | État |
+| :--- | :--- | :--- |
+| **1. Mode Vidéo** | Enregistrement H.264 (Start/Stop) avec timer. | ⏳ En cours |
+| **2. Mode Rafale** | Capture ultra-rapide (Burst mode). | ⏳ En attente |
+
+---
+
+## ✅ Terminé (Adaptation CM4, Pro Pack & Workflow)
+- [x] Encodeur Rotatif, Shifting UI, Galerie, Service, Time-lapse
+- [x] RAW/DNG, Bracketing, Histogramme, Focus Peaking
+- [x] Auto-sync Wi-Fi, Monitoring Batterie, Interface Web
