@@ -102,16 +102,20 @@ class CameraApp:
         PHOTO_DIR.mkdir(parents=True, exist_ok=True)
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
+        self.screen_w, self.screen_h = self.screen.get_size()
+        self.panel_w = max(120, min(260, self.screen_w // 4))
+        self.preview_w = max(160, self.screen_w - self.panel_w)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
         self.camera = Picamera2()
-        config = self.camera.create_preview_configuration(main={"size": (PREVIEW_W, SCREEN_H), "format": "RGB888"}, buffer_count=3)
+        config = self.camera.create_preview_configuration(main={"size": (self.preview_w, self.screen_h), "format": "RGB888"}, buffer_count=3)
         self.camera.configure(config)
         self.camera.start()
         # Controls exposed by libcamera vary by sensor/driver version.
         self.supported_controls = set(self.camera.camera_controls.keys())
         self._unsupported_controls_logged: set[str] = set()
+        logger.info("Display layout: screen=%sx%s preview=%sx%s panel=%s", self.screen_w, self.screen_h, self.preview_w, self.screen_h, self.panel_w)
 
         self.params = [
             CameraParam("Expo EV", "ExposureValue", -8.0, 8.0, 0.2, 0.0),
@@ -332,7 +336,7 @@ class CameraApp:
         try:
             img = pygame.image.load(str(self.gallery_files[self.gallery_index])).convert()
             rect = img.get_rect()
-            scale = min(SCREEN_W/rect.width, SCREEN_H/rect.height)
+            scale = min(self.screen_w / rect.width, self.screen_h / rect.height)
             self.current_image = pygame.transform.scale(img, (int(rect.width*scale), int(rect.height*scale)))
         except (pygame.error, IndexError, FileNotFoundError) as exc:
             logger.warning("Failed to load gallery image: %s", exc)
@@ -442,8 +446,8 @@ class CameraApp:
 
     def buttons(self):
         is_left = (self.current_menu() == Menu.SYSTEM)
-        x_base = 0 if is_left else PREVIEW_W
-        return [(pygame.Rect(x_base+MARGIN, 60+(BUTTON_H+7)*i, PANEL_W-2*MARGIN, BUTTON_H), t, a) for i, (t, a) in enumerate(self.menu_buttons())]
+        x_base = 0 if is_left else self.preview_w
+        return [(pygame.Rect(x_base+MARGIN, 60+(BUTTON_H+7)*i, self.panel_w-2*MARGIN, BUTTON_H), t, a) for i, (t, a) in enumerate(self.menu_buttons())]
 
     def apply_effect(self, frame):
         out = frame.astype(np.float32)
@@ -457,22 +461,22 @@ class CameraApp:
         if self.gallery_mode:
             self.screen.fill((0,0,0))
             if self.current_image:
-                self.screen.blit(self.current_image, self.current_image.get_rect(center=(400,240)))
+                self.screen.blit(self.current_image, self.current_image.get_rect(center=(self.screen_w // 2, self.screen_h // 2)))
                 # Delete button overlay
-                pygame.draw.rect(self.screen, (150, 0, 0), (SCREEN_W-100, SCREEN_H-50, 90, 40), border_radius=5)
-                self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (SCREEN_W-85, SCREEN_H-40))
+                pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
+                self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
             pygame.display.flip(); return
         is_left = (self.current_menu() == Menu.SYSTEM)
-        px, pax = (PANEL_W, 0) if is_left else (0, PREVIEW_W)
+        px, pax = (self.panel_w, 0) if is_left else (0, self.preview_w)
         self.screen.blit(pygame.surfarray.make_surface(self.apply_effect(frame).swapaxes(0,1)), (px, 0))
-        pygame.draw.rect(self.screen, (20,20,20), (pax, 0, PANEL_W, SCREEN_H))
+        pygame.draw.rect(self.screen, (20,20,20), (pax, 0, self.panel_w, self.screen_h))
         for r, t, a in self.buttons():
             pygame.draw.rect(self.screen, (50,50,50), r, border_radius=5)
             self.screen.blit(self.small.render(t, True, (255,255,255)), (r.x+5, r.y+10))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
-        if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px+PREVIEW_W-80, 20))
-        if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px+PREVIEW_W-80, 40))
-        if self.disk_free_mb > 0: self.screen.blit(self.small.render(f"SD: {self.disk_free_mb/1024:.1f}GB", True, (200,200,200)), (px+10, SCREEN_H-30))
+        if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px + self.preview_w - 95, 20))
+        if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px + self.preview_w - 95, 40))
+        if self.disk_free_mb > 0: self.screen.blit(self.small.render(f"SD: {self.disk_free_mb/1024:.1f}GB", True, (200,200,200)), (px+10, self.screen_h-30))
         if time.time() < self.message_until:
             # Short transient status line to confirm toggles and failures.
             msg_surface = self.small.render(self.message, True, (255, 220, 120))
@@ -550,9 +554,9 @@ class CameraApp:
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         if self.gallery_mode:
                             x, y = event.pos
-                            if y < 50 and x > SCREEN_W - 100: self.handle_action("gal_quit")
-                            elif y > SCREEN_H - 60 and x > SCREEN_W - 120: self.handle_action("gal_delete")
-                            elif x < SCREEN_W // 2: self.handle_action("gal_prev")
+                            if y < 50 and x > self.screen_w - 100: self.handle_action("gal_quit")
+                            elif y > self.screen_h - 60 and x > self.screen_w - 120: self.handle_action("gal_delete")
+                            elif x < self.screen_w // 2: self.handle_action("gal_prev")
                             else: self.handle_action("gal_next")
                         else:
                             for r, t, a in self.buttons():
