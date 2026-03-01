@@ -458,19 +458,36 @@ class CameraApp:
     def current_menu(self): return self.menu_order[self.menu_idx]
     def menu_buttons(self):
         m = self.current_menu()
-        if m == Menu.CAPTURE: return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("NEXT", "menu_next")]
-        if m == Menu.TUNE: return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB LOCK", "toggle_awb_lock"), ("NEXT", "menu_next")]
+        if m == Menu.CAPTURE:
+            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+        if m == Menu.TUNE:
+            return [("P+", "param_up"), ("P-", "param_down"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+        if m == Menu.COLOR:
+            return [("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+        if m == Menu.EFFECT:
+            return [("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+        if m == Menu.TIMELAPSE:
+            return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.SYSTEM:
             enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
-            return [("GALLERY", "gallery"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), (enc_label, "toggle_encoder"), ("NEXT", "menu_next"), ("OFF", "shutdown"), ("QUIT", "quit")]
-        return [("NEXT", "menu_next")]
+            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
+        return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
+        actions = self.menu_buttons()[:4]
+        y1 = max(50, int(self.screen_h * 0.24))
+        y2 = y1 + BUTTON_H + 18
+        left_x = 10
+        right_x = self.screen_w - self.panel_w - 10
+        slots = [
+            pygame.Rect(left_x, y1, self.panel_w, BUTTON_H),
+            pygame.Rect(left_x, y2, self.panel_w, BUTTON_H),
+            pygame.Rect(right_x, y1, self.panel_w, BUTTON_H),
+            pygame.Rect(right_x, y2, self.panel_w, BUTTON_H),
+        ]
         edge_buttons = []
-        for i, (title, action) in enumerate(self.menu_buttons()):
-            x = 10 if i % 2 == 0 else self.screen_w - self.panel_w - 10
-            y = 60 + (BUTTON_H + 8) * (i // 2)
-            edge_buttons.append((pygame.Rect(x, y, self.panel_w, BUTTON_H), title, action))
+        for idx, (title, action) in enumerate(actions):
+            edge_buttons.append((slots[idx], title, action))
         # Dedicated center shutter button always available on preview.
         shutter_size = min(110, self.screen_h // 5)
         shutter_rect = pygame.Rect(
@@ -518,14 +535,20 @@ class CameraApp:
                 btn.fill((20, 30, 40, 100))
                 self.screen.blit(btn, (r.x, r.y))
                 pygame.draw.rect(self.screen, (180, 220, 255, 130), r, width=1, border_radius=8)
-                # Rotate labels 90° to the left for edge-mounted controls.
+                # Rotate labels based on side so text reads toward image center.
                 label = self.small.render(t, True, (240, 240, 240))
-                label = pygame.transform.rotate(label, 90)
+                label = pygame.transform.rotate(label, -90 if r.centerx < (self.screen_w // 2) else 90)
                 self.screen.blit(label, label.get_rect(center=r.center))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
-        if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px + self.preview_w - 95, 20))
-        if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px + self.preview_w - 95, 40))
-        if self.disk_free_mb > 0: self.screen.blit(self.small.render(f"SD: {self.disk_free_mb/1024:.1f}GB", True, (200,200,200)), (px+10, self.screen_h-30))
+        top_info = []
+        if self.cpu_temp > 0:
+            top_info.append(f"CPU {int(self.cpu_temp)}C")
+        if self.disk_free_mb > 0:
+            top_info.append(f"SD {self.disk_free_mb/1024:.1f}GB")
+        if self.battery_percent >= 0:
+            top_info.append(f"BAT {int(self.battery_percent)}%")
+        if top_info:
+            self.screen.blit(self.small.render(" | ".join(top_info), True, (235, 235, 235)), (10, 12))
         if time.time() < self.message_until:
             # Short transient status line to confirm toggles and failures.
             msg_surface = self.small.render(self.message, True, (255, 220, 120))
