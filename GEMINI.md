@@ -5,7 +5,7 @@ Logiciel "béton" pour prototype d'appareil photo CM4 avec écran DSI et contrô
 ## Nouvelles Fonctionnalités (Adaptation CM4)
 
 - **Encodeur Rotatif (BCM 17, 18, 27)**: Navigation dans les réglages et capture physique via callbacks GPIO interrompus.
-- **Time-lapse complet**: Nouveau menu dédié pour configurer l'intervalle (1s à 1h). Indicateur visuel "REC" clignotant avec compteur de photos.
+- **Modes Créatifs**: Mode Vidéo (H.264 avec timer) et Time-lapse complet (1s à 1h).
 - **Support Pro (RAW & Bracketing)**: Capture simultanée JPG + DNG (RAW) et mode Bracketing d'exposition (3 photos auto).
 - **Aides à la prise de vue**: Histogramme Live et Focus Peaking (surlignage des zones nettes en rouge) en temps réel.
 - **Connectivité & Workflow**: Auto-sync Wi-Fi (rsync), Monitoring batterie I2C et Interface Web (Remote Control via Flask sur le port 5000).

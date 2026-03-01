@@ -189,6 +189,8 @@ class CameraApp:
         self.sync_active = False # Visual feedback for sync running
         self.battery_percent = -1.0 # -1 means no data available
         self.last_web_frame = None
+        self.video_active = False
+        self.video_start_time = 0.0
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -582,7 +584,26 @@ class CameraApp:
     def handle_action(self, action: str) -> None:
         if action == "capture":
             self.capture()
+        elif action == "toggle_video":
+            if not self.video_active:
+                try:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    path = PHOTO_DIR / f"vid_{ts}.mp4"
+                    self.camera.start_recording(str(path))
+                    self.video_active = True
+                    self.video_start_time = time.time()
+                    self.notify("VIDEO RECORDING START")
+                    logger.info(f"Video started: {path}")
+                except Exception as e:
+                    logger.error(f"Video start failed: {e}")
+                    self.notify("Video Error")
+            else:
+                self.camera.stop_recording()
+                self.video_active = False
+                self.notify("VIDEO RECORDING STOP")
+                logger.info("Video stopped")
         elif action == "gallery":
+
             self.open_gallery()
         elif action == "quit":
             raise SystemExit
@@ -651,8 +672,10 @@ class CameraApp:
     def menu_buttons(self) -> List[Tuple[str, str]]:
         menu = self.current_menu()
         if menu == Menu.CAPTURE:
+            v_label = "STOP VIDEO" if self.video_active else "START VIDEO"
             return [
                 ("CAPTURE", "capture"),
+                (v_label, "toggle_video"),
                 ("GRID NEXT", "grid_next"),
                 ("NEXT MENU", "menu_next"),
                 ("QUIT", "quit"),
@@ -770,6 +793,17 @@ class CameraApp:
             pygame.draw.circle(self.screen, (255, 0, 0), (preview_x + 30, 30), 10)
             txt = self.small.render(f"TL: {self.timelapse_count}", True, (255, 0, 0))
             self.screen.blit(txt, (preview_x + 50, 18))
+
+        # Draw Video REC indicator
+        if self.video_active:
+            # Flashing red dot
+            if int(time.time() * 2) % 2 == 0:
+                pygame.draw.circle(self.screen, (255, 0, 0), (preview_x + 30, 60), 10)
+            
+            dur = int(time.time() - self.video_start_time)
+            m, s = divmod(dur, 60)
+            txt = self.font.render(f"REC {m:02d}:{s:02d}", True, (255, 0, 0))
+            self.screen.blit(txt, (preview_x + 50, 48))
 
         # Draw Sync indicator
         if self.sync_active:
