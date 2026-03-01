@@ -88,6 +88,7 @@ class Menu(str, Enum):
     TUNE = "Tune"
     COLOR = "Color"
     EFFECT = "Effect"
+    TIMELAPSE = "Time-lapse"
     SYSTEM = "System"
 
 
@@ -156,11 +157,17 @@ class CameraApp:
             ("Cloudy", 5),
         ]
 
-        self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.SYSTEM]
+        self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.TIMELAPSE, Menu.SYSTEM]
         self.menu_idx = 0
         self.color_profile = "natural"
         self.effect_idx = 0
         self.grid_idx = 1
+
+        # Time-lapse state
+        self.timelapse_active = False
+        self.timelapse_interval = 5.0  # seconds
+        self.timelapse_last_shot = 0.0
+        self.timelapse_count = 0
 
         self.message = "Ready"
         self.message_until = 0.0
@@ -430,6 +437,20 @@ class CameraApp:
             self.cycle_grid(1)
         elif action == "grid_prev":
             self.cycle_grid(-1)
+        elif action == "tl_start_stop":
+            self.timelapse_active = not self.timelapse_active
+            if self.timelapse_active:
+                self.timelapse_last_shot = time.time()
+                self.timelapse_count = 0
+                self.notify("TL STARTED (5s)")
+            else:
+                self.notify(f"TL STOPPED: {self.timelapse_count} shots")
+        elif action == "tl_inc":
+            self.timelapse_interval = min(3600, self.timelapse_interval + 1)
+            self.notify(f"TL Interval: {self.timelapse_interval}s")
+        elif action == "tl_dec":
+            self.timelapse_interval = max(1, self.timelapse_interval - 1)
+            self.notify(f"TL Interval: {self.timelapse_interval}s")
         elif action == "menu_next":
             self.menu_idx = (self.menu_idx + 1) % len(self.menu_order)
         elif action == "menu_prev":
@@ -473,6 +494,15 @@ class CameraApp:
                 ("CAPTURE", "capture"),
                 ("NEXT MENU", "menu_next"),
             ]
+        if menu == Menu.TIMELAPSE:
+            label = "STOP TL" if self.timelapse_active else "START TL"
+            return [
+                (label, "tl_start_stop"),
+                (f"INTERVAL + (={self.timelapse_interval}s)", "tl_inc"),
+                (f"INTERVAL -", "tl_dec"),
+                ("GRID NEXT", "grid_next"),
+                ("NEXT MENU", "menu_next"),
+            ]
         return [
             ("GALLERY", "gallery"),
             ("SAVE SLOT C", "save:C"),
@@ -497,8 +527,18 @@ class CameraApp:
             y += BUTTON_H + 7
         return out
 
+    def update_timelapse_logic(self) -> None:
+        if not self.timelapse_active:
+            return
+        
+        now = time.time()
+        if now - self.timelapse_last_shot >= self.timelapse_interval:
+            self.capture()
+            self.timelapse_count += 1
+            self.timelapse_last_shot = now
+
     def draw(self, frame: np.ndarray) -> None:
-        is_left_panel = (self.current_menu() == Menu.SYSTEM)
+        is_left_panel = (self.current_menu() == Menu.SYSTEM or self.current_menu() == Menu.TIMELAPSE)
         preview_x = PANEL_W if is_left_panel else 0
         panel_x = 0 if is_left_panel else PREVIEW_W
 
@@ -511,6 +551,12 @@ class CameraApp:
         # Draw Preview
         self.screen.blit(surf, (preview_x, 0))
         self.draw_grid_shifted(preview_x)
+
+        # Draw REC indicator for timelapse
+        if self.timelapse_active and (int(time.time() * 2) % 2 == 0):
+            pygame.draw.circle(self.screen, (255, 0, 0), (preview_x + 30, 30), 10)
+            txt = self.small.render(f"TL: {self.timelapse_count}", True, (255, 0, 0))
+            self.screen.blit(txt, (preview_x + 50, 18))
 
         # Draw Panel
         panel_rect = pygame.Rect(panel_x, 0, PANEL_W, SCREEN_H)
@@ -607,6 +653,8 @@ class CameraApp:
                             self.handle_action("menu_next")
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.click(event.pos)
+
+                self.update_timelapse_logic()
 
                 frame = self.camera.capture_array()
                 self.draw(frame)

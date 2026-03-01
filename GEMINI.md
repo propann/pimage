@@ -5,7 +5,8 @@ Logiciel "béton" pour prototype d'appareil photo CM4 avec écran DSI et contrô
 ## Nouvelles Fonctionnalités (Adaptation CM4)
 
 - **Encodeur Rotatif (BCM 17, 18, 27)**: Navigation dans les réglages et capture physique via callbacks GPIO interrompus.
-- **Interface "Shifting"**: Le menu bascule à gauche ou à droite de l'écran (Preview décalée) pour optimiser l'ergonomie selon le mode sélectionné (Mode SYSTEM décalé).
+- **Time-lapse complet**: Nouveau menu dédié pour configurer l'intervalle (1s à 1h). Indicateur visuel "REC" clignotant avec compteur de photos.
+- **Interface "Shifting"**: Le menu bascule à gauche ou à droite de l'écran (Preview décalée) pour optimiser l'ergonomie (Modes SYSTEM et TIMELAPSE décalés).
 - **Galerie Intégrée**: Lancement d'un diaporama via `fbi` directement depuis l'interface.
 - **Logging Robuste**: Logs persistants dans `~/pimage.log` pour le debug terrain.
 - **Service Systemd**: Prêt pour l'autostart en mode kiosque.
