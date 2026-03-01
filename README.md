@@ -68,6 +68,7 @@ PIMAGE_ENCODER=0 python3 app_photo.py
 - Nombre de boutons par côté (optionnel): `PIMAGE_BTNS_SIDE=2..6` (défaut: `6`).
 - Filtres live: menu `EFFECT` (none, noir, vintage, cool, cyber, thermal, glitch).
 - Galerie tactile: gestes 2 doigts pour zoom + rotation.
+- Slider EV tactile en bas d'écran pour correction d'exposition rapide.
 
 ### Installation du Service (Autostart)
 ```bash

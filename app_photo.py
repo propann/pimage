@@ -167,6 +167,8 @@ class CameraApp:
         self.active_touches: Dict[int, Tuple[float, float]] = {}
         self.touch_taps: Dict[int, Tuple[float, float, float]] = {}
         self.gesture_baseline = None
+        self.ev_drag_active = False
+        self.ev_slider_rect = pygame.Rect(0, 0, 0, 0)
         self.message, self.message_until, self.last_capture = "Ready", 0.0, "-"
         self.capture_failures = 0
         self.encoder_requested = os.getenv("PIMAGE_ENCODER", "1").strip().lower() not in {"0", "false", "off", "no"}
@@ -565,6 +567,27 @@ class CameraApp:
             out[1:-1,1:-1][(dx+dy)>30] = [255, 0, 0]
         return np.clip(out, 0, 255).astype(np.uint8)
 
+    def get_param(self, key: str) -> CameraParam | None:
+        for p in self.params:
+            if p.key == key:
+                return p
+        return None
+
+    def update_exposure_slider(self, x: int) -> None:
+        """Set ExposureValue quickly from slider X position."""
+        if self.ev_slider_rect.width <= 0:
+            return
+        p = self.get_param("ExposureValue")
+        if p is None:
+            return
+        ratio = (x - self.ev_slider_rect.x) / self.ev_slider_rect.width
+        ratio = max(0.0, min(1.0, ratio))
+        raw = p.min_val + ratio * (p.max_val - p.min_val)
+        # Keep 0.2 EV steps for consistency with encoder/UI.
+        stepped = round(raw / p.step) * p.step
+        p.value = max(p.min_val, min(p.max_val, stepped))
+        self.apply_all_controls()
+
     def draw(self, frame):
         if self.gallery_mode:
             self.screen.fill((0,0,0))
@@ -606,6 +629,24 @@ class CameraApp:
                 if self.menu_label_rotation:
                     label = pygame.transform.rotate(label, self.menu_label_rotation)
                 self.screen.blit(label, label.get_rect(center=r.center))
+        # Quick exposure slider (EV) for fast correction.
+        slider_w = min(420, self.screen_w - 260)
+        slider_h = 18
+        slider_x = (self.screen_w - slider_w) // 2
+        slider_y = self.screen_h - 34
+        self.ev_slider_rect = pygame.Rect(slider_x, slider_y, slider_w, slider_h)
+        ev_param = self.get_param("ExposureValue")
+        if ev_param:
+            track = pygame.Surface((slider_w, slider_h), pygame.SRCALPHA)
+            track.fill((25, 35, 45, 120))
+            self.screen.blit(track, (slider_x, slider_y))
+            pygame.draw.rect(self.screen, (185, 220, 255, 140), self.ev_slider_rect, width=1, border_radius=9)
+            ratio = (ev_param.value - ev_param.min_val) / (ev_param.max_val - ev_param.min_val)
+            ratio = max(0.0, min(1.0, ratio))
+            knob_x = slider_x + int(ratio * slider_w)
+            pygame.draw.circle(self.screen, (255, 255, 255), (knob_x, slider_y + slider_h // 2), 9, width=2)
+            ev_lbl = f"EV {ev_param.value:+.1f}"
+            self.screen.blit(self.small.render(ev_lbl, True, (240, 240, 240)), (slider_x - 82, slider_y - 1))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
         top_info = []
         if self.cpu_temp > 0:
@@ -626,6 +667,10 @@ class CameraApp:
 
     def handle_pointer_press(self, x: int, y: int) -> None:
         """Handle touchscreen/mouse press using pixel coordinates."""
+        if self.ev_slider_rect.collidepoint((x, y)):
+            self.ev_drag_active = True
+            self.update_exposure_slider(x)
+            return
         if self.gallery_mode:
             if y < 50 and x > self.screen_w - 100:
                 self.handle_action("gal_quit")
@@ -663,6 +708,7 @@ class CameraApp:
     def handle_finger_up(self, event) -> None:
         tap = self.touch_taps.pop(event.finger_id, None)
         self.active_touches.pop(event.finger_id, None)
+        self.ev_drag_active = False
         if self.gallery_mode and tap and len(self.active_touches) == 0:
             x0, y0, t0 = tap
             if time.time() - t0 < 0.25 and math.hypot(event.x - x0, event.y - y0) < 0.03:
@@ -677,6 +723,9 @@ class CameraApp:
         tap = self.touch_taps.get(event.finger_id)
         if tap and math.hypot(event.x - tap[0], event.y - tap[1]) > 0.03:
             self.touch_taps.pop(event.finger_id, None)
+        if not self.gallery_mode and self.ev_drag_active:
+            self.update_exposure_slider(int(event.x * self.screen_w))
+            return
         if not self.gallery_mode or len(self.active_touches) < 2:
             return
         da = self._touch_dist_angle()
@@ -954,6 +1003,10 @@ class CameraApp:
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: raise SystemExit
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.handle_pointer_press(*event.pos)
+                    if event.type == pygame.MOUSEBUTTONUP:
+                        self.ev_drag_active = False
+                    if event.type == pygame.MOUSEMOTION and self.ev_drag_active:
+                        self.update_exposure_slider(event.pos[0])
                     if event.type == pygame.FINGERDOWN:
                         self.handle_finger_down(event)
                         if not self.gallery_mode:
