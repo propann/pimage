@@ -11,6 +11,7 @@ import os
 import subprocess
 import threading
 import time
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -114,6 +115,7 @@ class CameraApp:
         self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "0"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
+        self.edge_buttons_per_side = max(2, min(4, int(os.getenv("PIMAGE_BTNS_SIDE", "3"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
@@ -459,35 +461,36 @@ class CameraApp:
     def menu_buttons(self):
         m = self.current_menu()
         if m == Menu.CAPTURE:
-            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("GALLERY", "gallery"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.TUNE:
-            return [("P+", "param_up"), ("P-", "param_down"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("BACK", "menu_prev")]
         if m == Menu.COLOR:
-            return [("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("TIMER", "toggle_timer"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.EFFECT:
-            return [("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.TIMELAPSE:
-            return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.SYSTEM:
             enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
-            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
+            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
         return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
-        actions = self.menu_buttons()[:4]
-        y1 = max(50, int(self.screen_h * 0.24))
-        y2 = y1 + BUTTON_H + 18
+        max_visible = self.edge_buttons_per_side * 2
+        actions = self.menu_buttons()[:max_visible]
+        rows = max(1, min(self.edge_buttons_per_side, math.ceil(len(actions) / 2)))
+        top_y = max(35, int(self.screen_h * 0.15))
+        available_h = max(120, self.screen_h - top_y - 140)
+        step = max(BUTTON_H + 10, available_h // max(1, rows))
         left_x = 10
         right_x = self.screen_w - self.panel_w - 10
-        slots = [
-            pygame.Rect(left_x, y1, self.panel_w, BUTTON_H),
-            pygame.Rect(left_x, y2, self.panel_w, BUTTON_H),
-            pygame.Rect(right_x, y1, self.panel_w, BUTTON_H),
-            pygame.Rect(right_x, y2, self.panel_w, BUTTON_H),
-        ]
         edge_buttons = []
         for idx, (title, action) in enumerate(actions):
-            edge_buttons.append((slots[idx], title, action))
+            side_left = idx < rows
+            row_idx = idx if side_left else idx - rows
+            x = left_x if side_left else right_x
+            y = top_y + row_idx * step
+            edge_buttons.append((pygame.Rect(x, y, self.panel_w, BUTTON_H), title, action))
         # Dedicated center shutter button always available on preview.
         shutter_size = min(110, self.screen_h // 5)
         shutter_rect = pygame.Rect(
