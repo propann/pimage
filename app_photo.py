@@ -14,7 +14,9 @@ Designed for DSI touch displays in landscape.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,26 +27,44 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pygame
 
+# Configuration Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(Path.home() / "pimage.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 try:
     from picamera2 import Picamera2
-except ImportError:  # pragma: no cover - not available on non-RPi dev machines
+except ImportError:
     Picamera2 = None
+    logger.warning("Picamera2 not found. Simulation mode (limited).")
 
 try:
     import RPi.GPIO as GPIO
-except ImportError:  # pragma: no cover - not available on non-RPi dev machines
+except ImportError:
     GPIO = None
+    logger.warning("RPi.GPIO not found. Physical controls disabled.")
 
 
 SCREEN_W = 800
 SCREEN_H = 480
-PANEL_W = 320
-PREVIEW_W = SCREEN_W - PANEL_W
-BUTTON_H = 46
-MARGIN = 10
+PANEL_W = 200  # Reduit pour laisser plus de place au preview décalé
+PREVIEW_W = 600
+BUTTON_H = 42
+MARGIN = 8
 PHOTO_DIR = Path.home() / "photos"
 PROFILE_FILE = Path.home() / ".pimage_profiles.json"
 GRID_COLOR = (0, 220, 180)
+
+# GPIO Encoder Constants
+ENC_CLK = 17
+ENC_DT = 18
+ENC_SW = 27
 
 
 @dataclass
@@ -146,18 +166,43 @@ class CameraApp:
         self.message_until = 0.0
         self.last_capture = "-"
         self.hardware_summary = self.describe_hardware()
+        self.gallery_mode = False
+        self.encoder_enabled = False
 
         self.apply_color_profile("natural", notify=False)
         self.apply_all_controls()
+        self.setup_encoder()
 
     def setup_encoder(self) -> None:
         if GPIO is None:
             return
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup([ENC_CLK, ENC_DT, ENC_SW], GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        self.enc_last_clk = GPIO.input(ENC_CLK)
-        self.enc_last_sw = GPIO.input(ENC_SW)
-        self.encoder_enabled = True
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup([ENC_CLK, ENC_DT, ENC_SW], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            
+            # Use a threaded callback for the encoder
+            GPIO.add_event_detect(ENC_CLK, GPIO.FALLING, callback=self._encoder_callback, bouncetime=5)
+            GPIO.add_event_detect(ENC_SW, GPIO.FALLING, callback=self._button_callback, bouncetime=300)
+            
+            self.encoder_enabled = True
+            logger.info("Rotary encoder initialized on BCM 17, 18, 27")
+        except Exception as e:
+            logger.error(f"Failed to setup encoder: {e}")
+
+    def _encoder_callback(self, channel: int) -> None:
+        # Basic state machine for rotary encoder
+        dt_state = GPIO.input(ENC_DT)
+        if dt_state == 1:
+            self.handle_action("param_up")
+        else:
+            self.handle_action("param_down")
+
+    def _button_callback(self, channel: int) -> None:
+        # Validate or capture
+        if self.current_menu() == Menu.CAPTURE:
+            self.handle_action("capture")
+        else:
+            self.handle_action("menu_next")
 
     def notify(self, text: str, timeout: float = 1.6) -> None:
         self.message = text
@@ -318,11 +363,32 @@ class CameraApp:
         self.screen.blit(overlay, (0, 0))
 
     def capture(self) -> None:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = PHOTO_DIR / f"img_{ts}.jpg"
-        self.camera.capture_file(str(path))
-        self.last_capture = path.name
-        self.notify(f"Saved {path.name}", timeout=2.2)
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = PHOTO_DIR / f"img_{ts}.jpg"
+            self.camera.capture_file(str(path))
+            self.last_capture = path.name
+            logger.info(f"Photo captured: {path}")
+            self.notify(f"Saved {path.name}", timeout=2.2)
+        except Exception as e:
+            logger.error(f"Capture failed: {e}")
+            self.notify("Capture Error")
+
+    def open_gallery(self) -> None:
+        """Launch fbi slideshow for captured photos."""
+        try:
+            photos = sorted(list(PHOTO_DIR.glob("*.jpg")), reverse=True)
+            if not photos:
+                self.notify("No photos found")
+                return
+            
+            self.notify("Launching Gallery...")
+            # fbi -T 1 -d /dev/fb0 -noverbose -a *.jpg
+            subprocess.Popen(["fbi", "-T", "1", "-d", "/dev/fb0", "-noverbose", "-a"] + [str(p) for p in photos[:20]])
+            logger.info("Gallery (fbi) launched")
+        except Exception as e:
+            logger.error(f"Failed to launch gallery: {e}")
+            self.notify("Gallery Error")
 
     def current_menu(self) -> Menu:
         return self.menu_order[self.menu_idx]
@@ -331,7 +397,7 @@ class CameraApp:
         if action == "capture":
             self.capture()
         elif action == "gallery":
-            self.enter_gallery()
+            self.open_gallery()
         elif action == "quit":
             raise SystemExit
         elif action == "param_up":
@@ -378,17 +444,14 @@ class CameraApp:
         if menu == Menu.CAPTURE:
             return [
                 ("CAPTURE", "capture"),
-                ("GRID PREV", "grid_prev"),
                 ("GRID NEXT", "grid_next"),
                 ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
                 ("QUIT", "quit"),
             ]
         if menu == Menu.TUNE:
             return [
                 ("PARAM -", "param_down"),
                 ("PARAM +", "param_up"),
-                ("PARAM PREV", "prev"),
                 ("PARAM NEXT", "next"),
                 ("AE ON/OFF", "toggle_ae"),
                 ("AWB NEXT", "next_awb"),
@@ -396,7 +459,6 @@ class CameraApp:
             ]
         if menu == Menu.COLOR:
             return [
-                ("PROFILE PREV", "profile_prev"),
                 ("PROFILE NEXT", "profile_next"),
                 ("SAVE SLOT A", "save:A"),
                 ("LOAD SLOT A", "load:A"),
@@ -406,26 +468,25 @@ class CameraApp:
             ]
         if menu == Menu.EFFECT:
             return [
-                ("EFFECT PREV", "effect_prev"),
                 ("EFFECT NEXT", "effect_next"),
-                ("GRID PREV", "grid_prev"),
                 ("GRID NEXT", "grid_next"),
                 ("CAPTURE", "capture"),
                 ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
             ]
         return [
-            ("GRID PREV", "grid_prev"),
-            ("GRID NEXT", "grid_next"),
-            ("SAVE SLOT A", "save:A"),
-            ("LOAD SLOT A", "load:A"),
-            ("SAVE SLOT B", "save:B"),
-            ("LOAD SLOT B", "load:B"),
+            ("GALLERY", "gallery"),
+            ("SAVE SLOT C", "save:C"),
+            ("LOAD SLOT C", "load:C"),
             ("NEXT MENU", "menu_next"),
+            ("QUIT", "quit"),
         ]
 
     def buttons(self) -> List[Tuple[pygame.Rect, str, str]]:
-        x = PREVIEW_W + MARGIN
+        # Shift panel left or right
+        is_left_panel = (self.current_menu() == Menu.SYSTEM)
+        x_base = 0 if is_left_panel else PREVIEW_W
+        
+        x = x_base + MARGIN
         y = 60
         w = PANEL_W - 2 * MARGIN
         out: List[Tuple[pygame.Rect, str, str]] = []
@@ -437,55 +498,92 @@ class CameraApp:
         return out
 
     def draw(self, frame: np.ndarray) -> None:
+        is_left_panel = (self.current_menu() == Menu.SYSTEM)
+        preview_x = PANEL_W if is_left_panel else 0
+        panel_x = 0 if is_left_panel else PREVIEW_W
+
         frame_fx = self.apply_effect(frame)
         surf = pygame.surfarray.make_surface(frame_fx.swapaxes(0, 1))
-        self.screen.blit(surf, (0, 0))
-        self.draw_grid()
+        
+        # Clear screen
+        self.screen.fill((0, 0, 0))
+        
+        # Draw Preview
+        self.screen.blit(surf, (preview_x, 0))
+        self.draw_grid_shifted(preview_x)
 
-        panel = pygame.Rect(PREVIEW_W, 0, PANEL_W, SCREEN_H)
-        pygame.draw.rect(self.screen, (18, 18, 18), panel)
+        # Draw Panel
+        panel_rect = pygame.Rect(panel_x, 0, PANEL_W, SCREEN_H)
+        pygame.draw.rect(self.screen, (18, 18, 18), panel_rect)
 
-        title = self.font.render(f"MENU: {self.current_menu().value}", True, (235, 235, 235))
-        self.screen.blit(title, (PREVIEW_W + MARGIN, 16))
+        title_color = (255, 200, 0) if self.encoder_enabled else (235, 235, 235)
+        title = self.font.render(f"{self.current_menu().value}", True, title_color)
+        self.screen.blit(title, (panel_x + MARGIN, 16))
 
         for rect, title, _action in self.buttons():
-            color = (55, 55, 55)
+            color = (45, 45, 45)
             pygame.draw.rect(self.screen, color, rect, border_radius=8)
-            pygame.draw.rect(self.screen, (120, 120, 120), rect, width=2, border_radius=8)
+            pygame.draw.rect(self.screen, (100, 100, 100), rect, width=1, border_radius=8)
             label = self.small.render(title, True, (230, 230, 230))
-            self.screen.blit(label, (rect.x + 12, rect.y + 13))
+            self.screen.blit(label, (rect.x + 8, rect.y + 11))
 
         param = self.params[self.selected]
         status = [
-            f"Param: {param.label} = {param.value:.2f}",
-            f"AE: {'ON' if self.auto_exposure else 'OFF'} / AWB: {self.awb_modes[self.awb_mode_idx][0]}",
-            f"Profile: {self.color_profile} / Effect: {EFFECTS[self.effect_idx]}",
-            f"Grid: {GRIDS[self.grid_idx]}",
-            f"Last: {self.last_capture}",
-            self.hardware_summary,
+            f"P: {param.label}={param.value:.1f}",
+            f"AE:{'ON' if self.auto_exposure else 'OFF'} AWB:{self.awb_modes[self.awb_mode_idx][0]}",
+            f"Prof:{self.color_profile}",
+            f"Grid:{GRIDS[self.grid_idx]}",
+            f"Last:{self.last_capture[:15]}",
         ]
-        y = SCREEN_H - 130
-        pygame.draw.rect(self.screen, (0, 0, 0), (0, y, PREVIEW_W, 130))
+        
+        # Status overlay on preview
+        y_stat = SCREEN_H - 110
         for line in status:
-            txt = self.small.render(line, True, (240, 240, 240))
-            self.screen.blit(txt, (12, y + 4))
-            y += 21
+            txt = self.small.render(line, True, (255, 255, 255))
+            # Background for readability
+            bg_r = txt.get_rect(topleft=(preview_x + 10, y_stat))
+            pygame.draw.rect(self.screen, (0, 0, 0, 150), bg_r.inflate(4, 2))
+            self.screen.blit(txt, (preview_x + 10, y_stat))
+            y_stat += 20
 
         if time.time() < self.message_until:
-            msg = self.font.render(self.message, True, (255, 220, 120))
-            self.screen.blit(msg, (16, 14))
+            msg = self.font.render(self.message, True, (255, 255, 255))
+            m_r = msg.get_rect(center=(SCREEN_W // 2, 30))
+            pygame.draw.rect(self.screen, (200, 50, 0), m_r.inflate(20, 10))
+            self.screen.blit(msg, m_r)
 
         pygame.display.flip()
 
+    def draw_grid_shifted(self, offset_x: int) -> None:
+        mode = GRIDS[self.grid_idx]
+        if mode == "off":
+            return
+        w, h = PREVIEW_W, SCREEN_H
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        def vline(x: float, alpha: int = 165, thick: int = 1) -> None:
+            pygame.draw.line(overlay, (*GRID_COLOR, alpha), (int(x), 0), (int(x), h), thick)
+        def hline(y: float, alpha: int = 165, thick: int = 1) -> None:
+            pygame.draw.line(overlay, (*GRID_COLOR, alpha), (0, int(y)), (w, int(y)), thick)
+
+        if mode == "thirds":
+            vline(w / 3); vline(2 * w / 3); hline(h / 3); hline(2 * h / 3)
+        elif mode == "quarters":
+            for i in range(1, 4): vline((w / 4) * i); hline((h / 4) * i)
+        elif mode == "crosshair":
+            vline(w / 2, alpha=190, thick=2); hline(h / 2, alpha=190, thick=2)
+        elif mode == "diagonal-x":
+            pygame.draw.line(overlay, (*GRID_COLOR, 160), (0, 0), (w, h), 1)
+            pygame.draw.line(overlay, (*GRID_COLOR, 160), (w, 0), (0, h), 1)
+        elif mode == "golden-phi":
+            phi = 0.61803398875
+            vline(w * phi); vline(w * (1 - phi)); hline(h * phi); hline(h * (1 - phi))
+
+        self.screen.blit(overlay, (offset_x, 0))
+
     def click(self, pos: Tuple[int, int]) -> None:
-        rects = self.gallery_button_rects() if self.gallery_mode else self.buttons()
-        for i, (rect, _title, action) in enumerate(rects):
+        for rect, _title, action in self.buttons():
             if rect.collidepoint(pos):
-                self.focus_idx = i
-                if self.gallery_mode:
-                    self.handle_gallery_action(action)
-                else:
-                    self.handle_action(action)
+                self.handle_action(action)
                 return
 
     def run(self) -> None:
@@ -507,24 +605,8 @@ class CameraApp:
                             self.handle_action("menu_prev")
                         if event.key == pygame.K_RIGHT:
                             self.handle_action("menu_next")
-                        if event.key == pygame.K_a:
-                            self.handle_action("toggle_ae")
-                        if event.key == pygame.K_w:
-                            self.handle_action("next_awb")
-                        if event.key == pygame.K_p:
-                            self.handle_action("profile_next")
-                        if event.key == pygame.K_e:
-                            self.handle_action("effect_next")
-                        if event.key == pygame.K_g:
-                            self.handle_action("grid_next")
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.click(event.pos)
-
-                self.handle_encoder_input()
-
-                if self.gallery_mode and self.slideshow and self.gallery_files and time.time() >= self.next_slide_at:
-                    self.handle_gallery_action("gal_next")
-                    self.next_slide_at = time.time() + self.slide_every_s
 
                 frame = self.camera.capture_array()
                 self.draw(frame)
@@ -532,7 +614,7 @@ class CameraApp:
         finally:
             self.camera.stop()
             pygame.quit()
-            if self.encoder_enabled:
+            if GPIO:
                 GPIO.cleanup()
 
 

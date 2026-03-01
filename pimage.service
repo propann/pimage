@@ -1,0 +1,17 @@
+[Unit]
+Description=PImage Camera Application (CM4 Prototype)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/azoth/pimage/app_photo.py
+WorkingDirectory=/home/azoth/pimage
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=azoth
+Environment=PYTHONPATH=/home/azoth/pimage
+# Recommended for DRM performance on RPi
+Environment=SDL_VIDEODRIVER=kmsdrm
+
+[Install]
+WantedBy=multi-user.target
