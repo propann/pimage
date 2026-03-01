@@ -112,7 +112,8 @@ class CameraApp:
         self.panel_w = max(150, min(260, self.screen_w // 4))
         self.preview_w = self.screen_w
         self.menu_x = max(8, int(self.screen_w * 0.25) - (self.panel_w // 2))
-        self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "0"))
+        # Default to 90° left rotation for landscape-mounted displays.
+        self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "90"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
         self.edge_buttons_per_side = max(2, min(4, int(os.getenv("PIMAGE_BTNS_SIDE", "3"))))
