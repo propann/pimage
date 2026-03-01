@@ -8,7 +8,7 @@ Logiciel "béton" pour prototype d'appareil photo CM4 avec écran DSI et contrô
 - **Modes Créatifs**: Mode Vidéo (H.264), Mode Rafale (5, 10, 20 images), Retardateur (2s, 5s, 10s) et Time-lapse complet.
 - **Support Pro (RAW & Bracketing)**: Capture simultanée JPG + DNG (RAW), mode Bracketing d'exposition (3 photos auto) et Verrouillage AWB (Balance des blancs).
 - **Aides à la prise de vue**: Histogramme Live et Focus Peaking (surlignage des zones nettes en rouge) en temps réel.
-- **Sécurité & Robustesse**: Monitoring de l'espace disque (alerte/blocage si SD pleine) et surveillance thermique CPU.
+- **Sécurité & Robustesse**: Monitoring de l'espace disque, surveillance thermique CPU, bouton OFF (shutdown propre) et forçage de l'écriture SD (os.sync) après chaque capture.
 - **Galerie Native**: Visionneuse d'images intégrée avec fonction de suppression (Delete) pour le tri sur le terrain.
 - **Logging Robuste**: Logs persistants dans `~/pimage.log` pour le debug terrain.
 - **Service Systemd**: Prêt pour l'autostart en mode kiosque.

@@ -201,6 +201,8 @@ class CameraApp:
             if self.bracketing_enabled: self.camera.set_controls({"ExposureValue": orig_ev})
             self.last_capture = f"img_{ts_base}.jpg"
             self.notify("Captured")
+            # Force write to SD card to prevent corruption on power loss
+            os.sync()
         except Exception as e: logger.error(e); self.notify("Error")
 
     def capture_burst(self):
@@ -264,6 +266,11 @@ class CameraApp:
         elif action == "toggle_sync": self.auto_sync_enabled = not self.auto_sync_enabled
         elif action == "toggle_timer": self.self_timer_delay = {0:2, 2:5, 5:10, 10:0}[self.self_timer_delay]
         elif action == "menu_next": self.menu_idx = (self.menu_idx+1)%len(self.menu_order)
+        elif action == "shutdown":
+            self.notify("SHUTDOWN...")
+            pygame.display.flip()
+            time.sleep(1)
+            os.system("sudo poweroff")
         elif action == "quit": raise SystemExit
 
     def current_menu(self): return self.menu_order[self.menu_idx]
@@ -271,7 +278,7 @@ class CameraApp:
         m = self.current_menu()
         if m == Menu.CAPTURE: return [("CAPTURE", "capture"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("NEXT", "menu_next")]
         if m == Menu.TUNE: return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB LOCK", "toggle_awb_lock"), ("NEXT", "menu_next")]
-        if m == Menu.SYSTEM: return [("GALLERY", "gallery"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("QUIT", "quit")]
+        if m == Menu.SYSTEM: return [("GALLERY", "gallery"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("NEXT", "menu_next"), ("OFF", "shutdown"), ("QUIT", "quit")]
         return [("NEXT", "menu_next")]
 
     def buttons(self):
