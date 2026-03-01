@@ -24,6 +24,9 @@ Logiciel "béton" et complet pour transformer un **Raspberry Pi 4 / CM4** en app
 
 ## 🛠️ Installation (Raspberry Pi OS Bookworm)
 
+Configuration Pi4 détaillée (pas à pas, vérifications, dépannage):
+- `docs/PI4_SETUP.md`
+
 ### 1. Dépendances système
 ```bash
 sudo apt update
@@ -82,6 +85,7 @@ sudo systemctl enable --now pimage.service
 - `app_photo.py` : Cœur de l'application (multithreadé).
 - `pimage.service` : Configuration pour le démarrage automatique.
 - `sync_photos.sh` : Script de synchronisation Wi-Fi.
+- `docs/PI4_SETUP.md` : Configuration précise Raspberry Pi 4 + checklist de validation.
 - `PROGRESS.md` : Journal d'avancement détaillé.
 - `GEMINI.md` : Contexte technique pour l'IA.
 - `AGENTS.md` : Guide contributeur (standards code, tests, commits/PR).
