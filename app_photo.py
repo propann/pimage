@@ -108,8 +108,9 @@ class CameraApp:
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
         self.screen_w, self.screen_h = self.screen.get_size()
-        self.panel_w = max(120, min(260, self.screen_w // 4))
-        self.preview_w = max(160, self.screen_w - self.panel_w)
+        self.panel_w = max(150, min(260, self.screen_w // 4))
+        self.preview_w = self.screen_w
+        self.menu_x = max(8, int(self.screen_w * 0.25) - (self.panel_w // 2))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
@@ -120,7 +121,7 @@ class CameraApp:
         # Controls exposed by libcamera vary by sensor/driver version.
         self.supported_controls = set(self.camera.camera_controls.keys())
         self._unsupported_controls_logged: set[str] = set()
-        logger.info("Display layout: screen=%sx%s preview=%sx%s panel=%s", self.screen_w, self.screen_h, self.preview_w, self.screen_h, self.panel_w)
+        logger.info("Display layout: screen=%sx%s preview=%sx%s overlay_button_w=%s", self.screen_w, self.screen_h, self.preview_w, self.screen_h, self.panel_w)
 
         self.params = [
             CameraParam("Expo EV", "ExposureValue", -8.0, 8.0, 0.2, 0.0),
@@ -454,9 +455,14 @@ class CameraApp:
         return [("NEXT", "menu_next")]
 
     def buttons(self):
-        is_left = (self.current_menu() == Menu.SYSTEM)
-        x_base = 0 if is_left else self.preview_w
-        return [(pygame.Rect(x_base+MARGIN, 60+(BUTTON_H+7)*i, self.panel_w-2*MARGIN, BUTTON_H), t, a) for i, (t, a) in enumerate(self.menu_buttons())]
+        return [
+            (
+                pygame.Rect(self.menu_x, 60 + (BUTTON_H + 7) * i, self.panel_w, BUTTON_H),
+                t,
+                a,
+            )
+            for i, (t, a) in enumerate(self.menu_buttons())
+        ]
 
     def apply_effect(self, frame):
         out = frame.astype(np.float32)
@@ -475,13 +481,15 @@ class CameraApp:
                 pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
                 self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
             pygame.display.flip(); return
-        is_left = (self.current_menu() == Menu.SYSTEM)
-        px, pax = (self.panel_w, 0) if is_left else (0, self.preview_w)
+        px = 0
         self.screen.blit(pygame.surfarray.make_surface(self.apply_effect(frame).swapaxes(0,1)), (px, 0))
-        pygame.draw.rect(self.screen, (20,20,20), (pax, 0, self.panel_w, self.screen_h))
         for r, t, a in self.buttons():
-            pygame.draw.rect(self.screen, (50,50,50), r, border_radius=5)
-            self.screen.blit(self.small.render(t, True, (255,255,255)), (r.x+5, r.y+10))
+            # Transparent overlay buttons on top of full-screen preview.
+            btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
+            btn.fill((20, 30, 40, 110))
+            self.screen.blit(btn, (r.x, r.y))
+            pygame.draw.rect(self.screen, (180, 220, 255, 140), r, width=1, border_radius=8)
+            self.screen.blit(self.small.render(t, True, (240,240,240)), (r.x+8, r.y+10))
         if self.video_active: pygame.draw.circle(self.screen, (255,0,0), (px+30, 30), 10)
         if self.battery_percent >= 0: self.screen.blit(self.small.render(f"BAT: {int(self.battery_percent)}%", True, (255,255,255)), (px + self.preview_w - 95, 20))
         if self.cpu_temp > 0: self.screen.blit(self.small.render(f"{int(self.cpu_temp)}C", True, (255,100,0)), (px + self.preview_w - 95, 40))
