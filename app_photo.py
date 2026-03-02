@@ -70,6 +70,7 @@ GRID_COLOR = (0, 220, 180)
 NEON_CYAN = (72, 230, 255)
 NEON_MAGENTA = (255, 82, 214)
 HUD_BG = (12, 16, 28)
+THEMES = ["classic", "cyber", "minimal"]
 
 ENC_CLK = 17
 ENC_DT = 18
@@ -159,6 +160,7 @@ class CameraApp:
         self.awb_mode_idx, self.awb_modes = 0, [("Auto", 0), ("Tungsten", 1), ("Fluo", 2), ("Indoor", 3), ("Daylight", 4), ("Cloudy", 5)]
         self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.TIMELAPSE, Menu.SYSTEM]
         self.menu_idx, self.color_profile, self.effect_idx, self.grid_idx = 0, "natural", 0, 1
+        self.theme_idx = THEMES.index("cyber")
         self.timelapse_active, self.timelapse_interval, self.timelapse_last_shot, self.timelapse_count = False, 5.0, 0.0, 0
         self.raw_enabled, self.bracketing_enabled, self.peaking_enabled = False, False, False
         self.raw_available = True
@@ -199,15 +201,16 @@ class CameraApp:
 
     def draw_startup_splash(self, text: str, progress: float) -> None:
         """Draw a cyber-style startup splash with loading bar."""
-        self.screen.fill(HUD_BG)
+        colors = self.theme_colors()
+        self.screen.fill(colors["hud_bg"])
         center = (self.screen_w // 2, self.screen_h // 2 - 20)
         r1 = min(self.screen_w, self.screen_h) // 4
         r2 = int(r1 * 0.68)
-        pygame.draw.circle(self.screen, NEON_CYAN, center, r1, width=4)
-        pygame.draw.circle(self.screen, NEON_MAGENTA, center, r2, width=3)
-        pygame.draw.circle(self.screen, (24, 35, 60), center, int(r2 * 0.55), width=2)
+        pygame.draw.circle(self.screen, colors["accent_a"], center, r1, width=4)
+        pygame.draw.circle(self.screen, colors["accent_b"], center, r2, width=3)
+        pygame.draw.circle(self.screen, colors["frame_a"], center, int(r2 * 0.55), width=2)
 
-        title = self.font.render("PIMAGE", True, NEON_CYAN)
+        title = self.font.render("PIMAGE", True, colors["accent_a"])
         subtitle = self.small.render(text, True, (220, 220, 240))
         self.screen.blit(title, title.get_rect(center=(self.screen_w // 2, 56)))
         self.screen.blit(subtitle, subtitle.get_rect(center=(self.screen_w // 2, self.screen_h - 82)))
@@ -218,8 +221,8 @@ class CameraApp:
         by = self.screen_h - 52
         progress = max(0.0, min(1.0, progress))
         pygame.draw.rect(self.screen, (30, 40, 68), (bx, by, bar_w, bar_h), border_radius=8)
-        pygame.draw.rect(self.screen, NEON_MAGENTA, (bx, by, int(bar_w * progress), bar_h), border_radius=8)
-        pygame.draw.rect(self.screen, NEON_CYAN, (bx, by, bar_w, bar_h), width=1, border_radius=8)
+        pygame.draw.rect(self.screen, colors["accent_b"], (bx, by, int(bar_w * progress), bar_h), border_radius=8)
+        pygame.draw.rect(self.screen, colors["accent_a"], (bx, by, bar_w, bar_h), width=1, border_radius=8)
         pygame.display.flip()
         pygame.event.pump()
         time.sleep(0.12)
@@ -239,6 +242,7 @@ class CameraApp:
             self.encoder_requested = bool(data.get("encoder_requested", self.encoder_requested))
             self.web_live_enabled = bool(data.get("web_live_enabled", self.web_live_enabled))
             self.effect_idx = int(data.get("effect_idx", self.effect_idx)) % len(EFFECTS)
+            self.theme_idx = int(data.get("theme_idx", self.theme_idx)) % len(THEMES)
             profile_name = data.get("color_profile", self.color_profile)
             if isinstance(profile_name, str):
                 self.apply_color_profile(profile_name, notify=False)
@@ -258,6 +262,7 @@ class CameraApp:
             "encoder_requested": self.encoder_requested,
             "web_live_enabled": self.web_live_enabled,
             "effect_idx": self.effect_idx,
+            "theme_idx": self.theme_idx,
             "color_profile": self.color_profile,
         }
         tmp_file = PROFILE_FILE.with_suffix(".tmp")
@@ -266,6 +271,53 @@ class CameraApp:
             tmp_file.replace(PROFILE_FILE)
         except OSError as exc:
             logger.warning("Failed to save user state: %s", exc)
+
+    def theme_name(self) -> str:
+        return THEMES[self.theme_idx % len(THEMES)]
+
+    def theme_colors(self) -> dict:
+        theme = self.theme_name()
+        if theme == "classic":
+            return {
+                "hud_bg": (18, 22, 30),
+                "accent_a": (205, 220, 235),
+                "accent_b": (145, 170, 195),
+                "frame_a": (190, 205, 220),
+                "frame_b": (85, 98, 120),
+                "btn_bg": (28, 34, 45, 150),
+                "btn_edge": (205, 220, 235, 200),
+                "btn_line": (140, 160, 185, 180),
+                "text": (240, 240, 245),
+                "info": (230, 232, 238),
+                "fx": (210, 225, 240),
+            }
+        if theme == "minimal":
+            return {
+                "hud_bg": (10, 12, 16),
+                "accent_a": (240, 240, 240),
+                "accent_b": (165, 165, 165),
+                "frame_a": (120, 120, 120),
+                "frame_b": (80, 80, 80),
+                "btn_bg": (10, 10, 10, 110),
+                "btn_edge": (220, 220, 220, 130),
+                "btn_line": (170, 170, 170, 120),
+                "text": (245, 245, 245),
+                "info": (225, 225, 225),
+                "fx": (200, 200, 200),
+            }
+        return {
+            "hud_bg": HUD_BG,
+            "accent_a": NEON_CYAN,
+            "accent_b": NEON_MAGENTA,
+            "frame_a": (22, 30, 55),
+            "frame_b": NEON_MAGENTA,
+            "btn_bg": (16, 24, 40, 120),
+            "btn_edge": (*NEON_CYAN, 150),
+            "btn_line": (*NEON_MAGENTA, 160),
+            "text": (240, 240, 240),
+            "info": (220, 238, 255),
+            "fx": NEON_CYAN,
+        }
 
     def setup_encoder(self) -> None:
         """Configure GPIO events for the rotary encoder when available."""
@@ -517,6 +569,10 @@ class CameraApp:
             self.effect_idx = (self.effect_idx - 1) % len(EFFECTS)
             self.notify(f"FX {EFFECTS[self.effect_idx].upper()}")
             self.save_user_state()
+        elif action == "toggle_theme":
+            self.theme_idx = (self.theme_idx + 1) % len(THEMES)
+            self.notify(f"Theme {self.theme_name().upper()}")
+            self.save_user_state()
         elif action.startswith("effect_set_"):
             name = action.replace("effect_set_", "", 1)
             if name in EFFECTS:
@@ -556,7 +612,7 @@ class CameraApp:
             return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("GALLERY", "gallery"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("FX+", "effect_next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.SYSTEM:
             enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
-            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("TIMER", "toggle_timer"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
+            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("THEME", "toggle_theme"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("TIMER", "toggle_timer"), ("FX+", "effect_next"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
         return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
@@ -656,6 +712,7 @@ class CameraApp:
         self.apply_all_controls()
 
     def draw(self, frame):
+        colors = self.theme_colors()
         self.drawn_button_regions = []
         if self.gallery_mode:
             self.screen.fill((0,0,0))
@@ -684,25 +741,25 @@ class CameraApp:
             frame_surface = pygame.transform.smoothscale(frame_surface, (self.screen_w, self.screen_h))
         px = 0
         self.screen.blit(frame_surface, (px, 0))
-        # Cyber HUD frame.
-        pygame.draw.rect(self.screen, (22, 30, 55), (4, 4, self.screen_w - 8, self.screen_h - 8), width=1, border_radius=10)
-        pygame.draw.rect(self.screen, NEON_MAGENTA, (6, 6, self.screen_w - 12, self.screen_h - 12), width=1, border_radius=10)
+        pygame.draw.rect(self.screen, colors["frame_a"], (4, 4, self.screen_w - 8, self.screen_h - 8), width=1, border_radius=10)
+        if self.theme_name() != "minimal":
+            pygame.draw.rect(self.screen, colors["frame_b"], (6, 6, self.screen_w - 12, self.screen_h - 12), width=1, border_radius=10)
         for r, t, a in self.buttons():
             if a == "capture":
                 # Center shutter rendered as neon HUD ring.
                 cx, cy = r.center
                 radius = r.width // 2
-                pygame.draw.circle(self.screen, NEON_CYAN, (cx, cy), radius, width=4)
-                pygame.draw.circle(self.screen, NEON_MAGENTA, (cx, cy), int(radius * 0.62), width=3)
+                pygame.draw.circle(self.screen, colors["accent_a"], (cx, cy), radius, width=4)
+                pygame.draw.circle(self.screen, colors["accent_b"], (cx, cy), int(radius * 0.62), width=3)
                 pygame.draw.circle(self.screen, (70, 90, 120), (cx, cy), int(radius * 0.28), width=2)
                 self.drawn_button_regions.append((r, a))
             else:
                 # Transparent edge buttons on top of full-screen preview.
                 btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
-                btn.fill((16, 24, 40, 120))
-                label = self.small.render(t, True, (240, 240, 240))
-                pygame.draw.rect(btn, (*NEON_CYAN, 150), pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
-                pygame.draw.line(btn, (*NEON_MAGENTA, 160), (8, r.height - 3), (r.width - 8, r.height - 3), width=2)
+                btn.fill(colors["btn_bg"])
+                label = self.small.render(t, True, colors["text"])
+                pygame.draw.rect(btn, colors["btn_edge"], pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
+                pygame.draw.line(btn, colors["btn_line"], (8, r.height - 3), (r.width - 8, r.height - 3), width=2)
                 btn.blit(label, label.get_rect(center=(r.width // 2, r.height // 2)))
                 if self.overlay_rotation:
                     btn = pygame.transform.rotate(btn, self.overlay_rotation)
@@ -737,9 +794,11 @@ class CameraApp:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
             # Keep system info on the left side.
-            self.screen.blit(self.small.render(" | ".join(top_info), True, (220, 238, 255)), (10, (self.screen_h // 2) - 12))
+            self.screen.blit(self.small.render(" | ".join(top_info), True, colors["info"]), (10, (self.screen_h // 2) - 12))
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
-        self.screen.blit(self.small.render(fx_lbl, True, NEON_CYAN), (self.screen_w - 180, 12))
+        theme_lbl = f"TH {self.theme_name().upper()}"
+        self.screen.blit(self.small.render(fx_lbl, True, colors["fx"]), (self.screen_w - 180, 12))
+        self.screen.blit(self.small.render(theme_lbl, True, colors["fx"]), (self.screen_w - 180, 34))
         if time.time() < self.message_until:
             # Short transient status line to confirm toggles and failures.
             msg_surface = self.small.render(self.message, True, (255, 220, 120))
@@ -885,7 +944,7 @@ class CameraApp:
             "capture", "burst", "toggle_video", "gallery",
             "gal_next", "gal_prev", "gal_quit",
             "menu_next", "menu_prev", "param_up", "param_down",
-            "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer", "toggle_encoder",
+            "toggle_ae", "toggle_awb_lock", "toggle_raw", "toggle_peaking", "toggle_sync", "toggle_timer", "toggle_encoder", "toggle_theme",
             "effect_next", "effect_prev",
         }
         app = Flask(__name__)
@@ -1035,6 +1094,7 @@ class CameraApp:
                 "raw_enabled": self.raw_enabled,
                 "sync_enabled": self.auto_sync_enabled,
                 "web_live_enabled": self.web_live_enabled,
+                "theme": self.theme_name(),
             }
 
         @app.route("/")

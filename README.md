@@ -70,6 +70,7 @@ PIMAGE_ENCODER=0 python3 app_photo.py
 - Galerie tactile: gestes 2 doigts pour zoom + rotation.
 - Slider EV tactile en bas d'écran pour correction d'exposition rapide.
 - Splash screen au démarrage avec barre de chargement.
+- Themes UI: `Classic`, `Cyber`, `Minimal` (toggle via menu `SYSTEM > THEME`).
 
 ### Installation du Service (Autostart)
 ```bash
