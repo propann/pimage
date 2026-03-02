@@ -117,8 +117,8 @@ class CameraApp:
         self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "0"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
-        # Keep overlay labels horizontal for touch readability in landscape.
-        self.menu_label_rotation = 0
+        # Rotate overlay button labels 90° left as requested.
+        self.menu_label_rotation = -90
         self.edge_buttons_per_side = max(2, min(6, int(os.getenv("PIMAGE_BTNS_SIDE", "6"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
