@@ -155,6 +155,7 @@ class CameraApp:
         self.menu_idx, self.color_profile, self.effect_idx, self.grid_idx = 0, "natural", 0, 1
         self.timelapse_active, self.timelapse_interval, self.timelapse_last_shot, self.timelapse_count = False, 5.0, 0.0, 0
         self.raw_enabled, self.bracketing_enabled, self.peaking_enabled = False, False, False
+        self.raw_available = True
         self.awb_locked = False
         self.auto_sync_enabled, self.sync_active, self.battery_percent = False, False, -1.0
         self.video_active, self.video_start_time, self.burst_count = False, 0.0, 5
@@ -348,7 +349,16 @@ class CameraApp:
                 path = PHOTO_DIR / f"img_{ts}.jpg"
                 if self.bracketing_enabled: self.camera.set_controls({"ExposureValue": orig_ev + ev}); time.sleep(0.1)
                 self.camera.capture_file(str(path))
-                if self.raw_enabled: self.camera.capture_file(str(PHOTO_DIR / f"img_{ts}.dng"), format="dng")
+                if self.raw_enabled and self.raw_available:
+                    try:
+                        self.camera.capture_file(str(PHOTO_DIR / f"img_{ts}.dng"), format="dng")
+                    except Exception as raw_exc:
+                        # Some sensors/libcamera builds do not expose DNG output.
+                        logger.warning("RAW/DNG capture unavailable: %s", raw_exc)
+                        self.raw_available = False
+                        self.raw_enabled = False
+                        self.notify("RAW unsupported on this camera", timeout=2.5)
+                        self.save_user_state()
             if self.bracketing_enabled: self.camera.set_controls({"ExposureValue": orig_ev})
             self.last_capture = f"img_{ts_base}.jpg"
             self.notify("Captured")
@@ -441,6 +451,9 @@ class CameraApp:
             self.notify(f"AWB LOCK {'ON' if self.awb_locked else 'OFF'}")
             self.save_user_state()
         elif action == "toggle_raw":
+            if not self.raw_available:
+                self.notify("RAW unsupported")
+                return
             self.raw_enabled = not self.raw_enabled
             self.notify(f"RAW {'ON' if self.raw_enabled else 'OFF'}")
             self.save_user_state()
