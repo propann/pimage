@@ -110,8 +110,8 @@ class CameraApp:
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
         pygame.mouse.set_visible(False)
         self.screen_w, self.screen_h = self.screen.get_size()
-        # Wide edge controls for easier touch access.
-        self.panel_w = max(220, min(int(self.screen_w * 0.42), (self.screen_w // 2) - 24))
+        # Base control width (actual button widths are computed dynamically).
+        self.panel_w = max(180, min(int(self.screen_w * 0.28), (self.screen_w // 2) - 24))
         self.preview_w = self.screen_w
         self.menu_x = max(8, int(self.screen_w * 0.25) - (self.panel_w // 2))
         # Default rotation is 0; set PIMAGE_ROTATE if the Linux display is not oriented correctly.
@@ -169,7 +169,7 @@ class CameraApp:
         self.active_touches: Dict[int, Tuple[float, float]] = {}
         self.touch_taps: Dict[int, Tuple[float, float, float]] = {}
         self.gesture_baseline = None
-        self.overlay_rotation = -90
+        self.overlay_rotation = 0
         self.drawn_button_regions: List[Tuple[pygame.Rect, str]] = []
         self.ev_drag_active = False
         self.ev_slider_rect = pygame.Rect(0, 0, 0, 0)
@@ -527,25 +527,31 @@ class CameraApp:
     def buttons(self):
         max_visible = self.edge_buttons_per_side * 2
         actions = self.menu_buttons()[:max_visible]
-        rows = max(1, min(self.edge_buttons_per_side, math.ceil(len(actions) / 2)))
-        top_margin = 8
-        bottom_margin = 8
+        row_cap = self.edge_buttons_per_side
+        top_actions = actions[:row_cap]
+        bot_actions = actions[row_cap:row_cap * 2]
         side_margin = 8
-        available_h = max(120, self.screen_h - top_margin - bottom_margin)
-        button_h = max(30, min(BUTTON_H + 6, (available_h - (rows - 1) * 6) // max(1, rows)))
-        if rows > 1:
-            step = (self.screen_h - top_margin - bottom_margin - button_h) / (rows - 1)
-        else:
-            step = 0
-        left_x = side_margin
-        right_x = self.screen_w - self.panel_w - side_margin
+        row_gap = 8
+        button_h = max(34, min(48, self.screen_h // 10))
+        usable_w = self.screen_w - (side_margin * 2)
+
+        def make_row(row_actions, y):
+            out = []
+            if not row_actions:
+                return out
+            n = len(row_actions)
+            gap = 6
+            bw = max(72, int((usable_w - gap * (n - 1)) / n))
+            total = bw * n + gap * (n - 1)
+            start_x = (self.screen_w - total) // 2
+            for i, (title, action) in enumerate(row_actions):
+                x = start_x + i * (bw + gap)
+                out.append((pygame.Rect(x, y, bw, button_h), title, action))
+            return out
+
         edge_buttons = []
-        for idx, (title, action) in enumerate(actions):
-            side_left = idx < rows
-            row_idx = idx if side_left else idx - rows
-            x = left_x if side_left else right_x
-            y = int(top_margin + row_idx * step)
-            edge_buttons.append((pygame.Rect(x, y, self.panel_w, int(button_h)), title, action))
+        edge_buttons.extend(make_row(top_actions, 8))
+        edge_buttons.extend(make_row(bot_actions, self.screen_h - button_h - 8))
         # Dedicated center shutter button always available on preview.
         shutter_size = min(110, self.screen_h // 5)
         shutter_rect = pygame.Rect(
@@ -687,7 +693,7 @@ class CameraApp:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
             # Keep system info on the left side.
-            self.screen.blit(self.small.render(" | ".join(top_info), True, (235, 235, 235)), (8, self.screen_h - 26))
+            self.screen.blit(self.small.render(" | ".join(top_info), True, (235, 235, 235)), (8, (self.screen_h // 2) - 12))
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
         self.screen.blit(self.small.render(fx_lbl, True, (180, 255, 210)), (self.screen_w - 140, 12))
         if time.time() < self.message_until:
