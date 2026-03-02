@@ -129,6 +129,7 @@ class CameraApp:
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 19)
         self.pixel_font = pygame.font.SysFont("DejaVuSansMono", 10, bold=True)
+        self.theme_idx = THEMES.index("cyber")
         self.draw_startup_splash("Initializing display", 0.12)
         self.camera = Picamera2()
         self.draw_startup_splash("Configuring camera", 0.35)
@@ -161,7 +162,6 @@ class CameraApp:
         self.awb_mode_idx, self.awb_modes = 0, [("Auto", 0), ("Tungsten", 1), ("Fluo", 2), ("Indoor", 3), ("Daylight", 4), ("Cloudy", 5)]
         self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.TIMELAPSE, Menu.SYSTEM]
         self.menu_idx, self.color_profile, self.effect_idx, self.grid_idx = 0, "natural", 0, 1
-        self.theme_idx = THEMES.index("cyber")
         self.timelapse_active, self.timelapse_interval, self.timelapse_last_shot, self.timelapse_count = False, 5.0, 0.0, 0
         self.raw_enabled, self.bracketing_enabled, self.peaking_enabled = False, False, False
         self.raw_available = True
