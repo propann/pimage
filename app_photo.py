@@ -67,6 +67,9 @@ MARGIN = 8
 PHOTO_DIR = Path.home() / "photos"
 PROFILE_FILE = Path.home() / ".pimage_profiles.json"
 GRID_COLOR = (0, 220, 180)
+NEON_CYAN = (72, 230, 255)
+NEON_MAGENTA = (255, 82, 214)
+HUD_BG = (12, 16, 28)
 
 ENC_CLK = 17
 ENC_DT = 18
@@ -124,7 +127,9 @@ class CameraApp:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 19)
+        self.draw_startup_splash("Initializing display", 0.12)
         self.camera = Picamera2()
+        self.draw_startup_splash("Configuring camera", 0.35)
         config = self.camera.create_preview_configuration(main={"size": (self.preview_w, self.screen_h), "format": "RGB888"}, buffer_count=3)
         self.camera.configure(config)
         self.camera.start()
@@ -180,14 +185,44 @@ class CameraApp:
         self.web_live_enabled = os.getenv("PIMAGE_WEB_LIVE", "0").strip().lower() in {"1", "true", "on", "yes"}
         self.frame_lock = threading.Lock()
 
+        self.draw_startup_splash("Loading profiles", 0.62)
         self.apply_color_profile("natural", notify=False)
         self.load_user_state()
         self.apply_all_controls()
         self.setup_encoder()
+        self.draw_startup_splash("Starting services", 0.86)
         threading.Thread(target=self.sync_worker, daemon=True).start()
         threading.Thread(target=self.battery_worker, daemon=True).start()
         threading.Thread(target=self.disk_worker, daemon=True).start()
         if Flask: threading.Thread(target=self.web_server_worker, daemon=True).start()
+        self.draw_startup_splash("Ready", 1.0)
+
+    def draw_startup_splash(self, text: str, progress: float) -> None:
+        """Draw a cyber-style startup splash with loading bar."""
+        self.screen.fill(HUD_BG)
+        center = (self.screen_w // 2, self.screen_h // 2 - 20)
+        r1 = min(self.screen_w, self.screen_h) // 4
+        r2 = int(r1 * 0.68)
+        pygame.draw.circle(self.screen, NEON_CYAN, center, r1, width=4)
+        pygame.draw.circle(self.screen, NEON_MAGENTA, center, r2, width=3)
+        pygame.draw.circle(self.screen, (24, 35, 60), center, int(r2 * 0.55), width=2)
+
+        title = self.font.render("PIMAGE", True, NEON_CYAN)
+        subtitle = self.small.render(text, True, (220, 220, 240))
+        self.screen.blit(title, title.get_rect(center=(self.screen_w // 2, 56)))
+        self.screen.blit(subtitle, subtitle.get_rect(center=(self.screen_w // 2, self.screen_h - 82)))
+
+        bar_w = min(420, self.screen_w - 120)
+        bar_h = 16
+        bx = (self.screen_w - bar_w) // 2
+        by = self.screen_h - 52
+        progress = max(0.0, min(1.0, progress))
+        pygame.draw.rect(self.screen, (30, 40, 68), (bx, by, bar_w, bar_h), border_radius=8)
+        pygame.draw.rect(self.screen, NEON_MAGENTA, (bx, by, int(bar_w * progress), bar_h), border_radius=8)
+        pygame.draw.rect(self.screen, NEON_CYAN, (bx, by, bar_w, bar_h), width=1, border_radius=8)
+        pygame.display.flip()
+        pygame.event.pump()
+        time.sleep(0.12)
 
     def load_user_state(self) -> None:
         """Load persisted user preferences from PROFILE_FILE when available."""
@@ -649,19 +684,25 @@ class CameraApp:
             frame_surface = pygame.transform.smoothscale(frame_surface, (self.screen_w, self.screen_h))
         px = 0
         self.screen.blit(frame_surface, (px, 0))
+        # Cyber HUD frame.
+        pygame.draw.rect(self.screen, (22, 30, 55), (4, 4, self.screen_w - 8, self.screen_h - 8), width=1, border_radius=10)
+        pygame.draw.rect(self.screen, NEON_MAGENTA, (6, 6, self.screen_w - 12, self.screen_h - 12), width=1, border_radius=10)
         for r, t, a in self.buttons():
             if a == "capture":
-                # Central shutter button: outer ring only, transparent center.
+                # Center shutter rendered as neon HUD ring.
                 cx, cy = r.center
                 radius = r.width // 2
-                pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), radius, width=3)
+                pygame.draw.circle(self.screen, NEON_CYAN, (cx, cy), radius, width=4)
+                pygame.draw.circle(self.screen, NEON_MAGENTA, (cx, cy), int(radius * 0.62), width=3)
+                pygame.draw.circle(self.screen, (70, 90, 120), (cx, cy), int(radius * 0.28), width=2)
                 self.drawn_button_regions.append((r, a))
             else:
                 # Transparent edge buttons on top of full-screen preview.
                 btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
-                btn.fill((20, 30, 40, 100))
+                btn.fill((16, 24, 40, 120))
                 label = self.small.render(t, True, (240, 240, 240))
-                pygame.draw.rect(btn, (180, 220, 255, 130), pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
+                pygame.draw.rect(btn, (*NEON_CYAN, 150), pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
+                pygame.draw.line(btn, (*NEON_MAGENTA, 160), (8, r.height - 3), (r.width - 8, r.height - 3), width=2)
                 btn.blit(label, label.get_rect(center=(r.width // 2, r.height // 2)))
                 if self.overlay_rotation:
                     btn = pygame.transform.rotate(btn, self.overlay_rotation)
@@ -696,9 +737,9 @@ class CameraApp:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
             # Keep system info on the left side.
-            self.screen.blit(self.small.render(" | ".join(top_info), True, (235, 235, 235)), (8, (self.screen_h // 2) - 12))
+            self.screen.blit(self.small.render(" | ".join(top_info), True, (220, 238, 255)), (10, (self.screen_h // 2) - 12))
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
-        self.screen.blit(self.small.render(fx_lbl, True, (180, 255, 210)), (self.screen_w - 140, 12))
+        self.screen.blit(self.small.render(fx_lbl, True, NEON_CYAN), (self.screen_w - 180, 12))
         if time.time() < self.message_until:
             # Short transient status line to confirm toggles and failures.
             msg_surface = self.small.render(self.message, True, (255, 220, 120))
