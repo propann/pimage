@@ -108,6 +108,7 @@ class CameraApp:
         PHOTO_DIR.mkdir(parents=True, exist_ok=True)
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
+        pygame.mouse.set_visible(False)
         self.screen_w, self.screen_h = self.screen.get_size()
         self.panel_w = max(150, min(260, self.screen_w // 4))
         self.preview_w = self.screen_w
