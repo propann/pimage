@@ -740,11 +740,16 @@ class CameraApp:
                 if abs(self.gallery_angle) > 0.1:
                     img = pygame.transform.rotate(img, self.gallery_angle)
                 self.screen.blit(img, img.get_rect(center=(self.screen_w // 2, self.screen_h // 2)))
-                # Gallery controls: back + delete.
-                pygame.draw.rect(self.screen, (45, 45, 60), (10, 10, 90, 40), border_radius=6)
-                self.screen.blit(self.small.render("BACK", True, (255,255,255)), (28, 20))
-                pygame.draw.rect(self.screen, (45, 70, 55), (110, 10, 90, 40), border_radius=6)
-                self.screen.blit(self.small.render("EDIT", True, (255,255,255)), (136, 20))
+                # Gallery controls: BACK + EDIT top centered, DELETE bottom-right.
+                top_y = 10
+                btn_w, btn_h = 90, 40
+                gap = 10
+                back_x = (self.screen_w // 2) - btn_w - (gap // 2)
+                edit_x = (self.screen_w // 2) + (gap // 2)
+                pygame.draw.rect(self.screen, (45, 45, 60), (back_x, top_y, btn_w, btn_h), border_radius=6)
+                self.screen.blit(self.small.render("BACK", True, (255,255,255)), (back_x + 18, top_y + 10))
+                pygame.draw.rect(self.screen, (45, 70, 55), (edit_x, top_y, btn_w, btn_h), border_radius=6)
+                self.screen.blit(self.small.render("EDIT", True, (255,255,255)), (edit_x + 25, top_y + 10))
                 pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
                 self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
             pygame.display.flip(); return
@@ -837,9 +842,14 @@ class CameraApp:
             self.update_exposure_slider(x)
             return
         if self.gallery_mode:
-            if 10 <= x <= 100 and 10 <= y <= 50:
+            top_y = 10
+            btn_w, btn_h = 90, 40
+            gap = 10
+            back_x = (self.screen_w // 2) - btn_w - (gap // 2)
+            edit_x = (self.screen_w // 2) + (gap // 2)
+            if back_x <= x <= (back_x + btn_w) and top_y <= y <= (top_y + btn_h):
                 self.handle_action("gal_quit")
-            elif 110 <= x <= 200 and 10 <= y <= 50:
+            elif edit_x <= x <= (edit_x + btn_w) and top_y <= y <= (top_y + btn_h):
                 self.handle_action("edit")
             elif y < 50 and x > self.screen_w - 100:
                 self.handle_action("gal_quit")
