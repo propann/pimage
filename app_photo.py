@@ -813,7 +813,7 @@ class CameraApp:
             info_surface = self.small.render(" | ".join(top_info), True, colors["info"])
             if self.overlay_rotation:
                 info_surface = pygame.transform.rotate(info_surface, self.overlay_rotation)
-            self.screen.blit(info_surface, info_surface.get_rect(topleft=(10, 10)))
+            self.screen.blit(info_surface, info_surface.get_rect(midtop=(self.screen_w // 2, 8)))
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
         theme_lbl = f"TH {self.theme_name().upper()}"
         self.screen.blit(self.small.render(fx_lbl, True, colors["fx"]), (self.screen_w - 180, 12))
