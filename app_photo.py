@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -45,6 +46,7 @@ MARGIN = 10
 PHOTO_DIR = Path.home() / "photos"
 PROFILE_FILE = Path.home() / ".pimage_profiles.json"
 GRID_COLOR = (0, 220, 180)
+UI_ROTATE_180 = True
 
 
 @dataclass
@@ -171,6 +173,26 @@ class CameraApp:
             return f"Sensor={sensor} controls={ccount}"
         except Exception:
             return "Sensor info unavailable"
+
+    def read_system_status(self) -> str:
+        cpu_txt = "CPU --"
+        sd_txt = "SD --"
+        temp_path = Path("/sys/class/thermal/thermal_zone0/temp")
+        if temp_path.exists():
+            try:
+                raw = int(temp_path.read_text().strip())
+                cpu_txt = f"CPU {raw / 1000:.0f}C"
+            except Exception:
+                pass
+
+        try:
+            usage = shutil.disk_usage(str(Path.home()))
+            used_pct = (usage.used / usage.total) * 100 if usage.total else 0.0
+            sd_txt = f"SD {used_pct:.0f}%"
+        except Exception:
+            pass
+
+        return f"{cpu_txt} | {sd_txt}"
 
     def save_profile(self, slot: str) -> None:
         payload = {
@@ -437,23 +459,48 @@ class CameraApp:
         return out
 
     def draw(self, frame: np.ndarray) -> None:
+        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
+
         frame_fx = self.apply_effect(frame)
         surf = pygame.surfarray.make_surface(frame_fx.swapaxes(0, 1))
-        self.screen.blit(surf, (0, 0))
+        canvas.blit(surf, (0, 0))
+
+        original_screen = self.screen
+        self.screen = canvas
         self.draw_grid()
+        self.screen = original_screen
 
         panel = pygame.Rect(PREVIEW_W, 0, PANEL_W, SCREEN_H)
-        pygame.draw.rect(self.screen, (18, 18, 18), panel)
+        pygame.draw.rect(canvas, (18, 18, 18), panel)
 
         title = self.font.render(f"MENU: {self.current_menu().value}", True, (235, 235, 235))
-        self.screen.blit(title, (PREVIEW_W + MARGIN, 16))
+        canvas.blit(title, (PREVIEW_W + MARGIN, 16))
 
         for rect, title, _action in self.buttons():
             color = (55, 55, 55)
-            pygame.draw.rect(self.screen, color, rect, border_radius=8)
-            pygame.draw.rect(self.screen, (120, 120, 120), rect, width=2, border_radius=8)
+            pygame.draw.rect(canvas, color, rect, border_radius=8)
+            pygame.draw.rect(canvas, (120, 120, 120), rect, width=2, border_radius=8)
             label = self.small.render(title, True, (230, 230, 230))
-            self.screen.blit(label, (rect.x + 12, rect.y + 13))
+            canvas.blit(label, (rect.x + 12, rect.y + 13))
+
+        # HUD top-left: RC CYBER + status CPU/SD
+        rc_txt = self.small.render("RC CYBER", True, (120, 250, 255))
+        hw_txt = self.small.render(self.read_system_status(), True, (230, 230, 230))
+        canvas.blit(rc_txt, (12, 12))
+        canvas.blit(hw_txt, (12, 34))
+
+        # EV slider on the right, pushed to the bottom area
+        ev = self.params[0]
+        slider_h = 170
+        slider_x = PREVIEW_W - 18
+        slider_top = SCREEN_H - slider_h - 36
+        slider_bottom = slider_top + slider_h
+        pygame.draw.line(canvas, (205, 230, 255), (slider_x, slider_top), (slider_x, slider_bottom), 4)
+        ratio = (ev.value - ev.min_val) / (ev.max_val - ev.min_val)
+        knob_y = int(slider_bottom - ratio * slider_h)
+        pygame.draw.circle(canvas, (220, 250, 255), (slider_x, knob_y), 9, 2)
+        ev_lbl = self.small.render(f"EV {ev.value:+.1f}", True, (230, 230, 230))
+        canvas.blit(ev_lbl, (slider_x - 28, slider_bottom + 8))
 
         param = self.params[self.selected]
         status = [
@@ -465,15 +512,21 @@ class CameraApp:
             self.hardware_summary,
         ]
         y = SCREEN_H - 130
-        pygame.draw.rect(self.screen, (0, 0, 0), (0, y, PREVIEW_W, 130))
+        pygame.draw.rect(canvas, (0, 0, 0), (0, y, PREVIEW_W, 130))
         for line in status:
             txt = self.small.render(line, True, (240, 240, 240))
-            self.screen.blit(txt, (12, y + 4))
+            canvas.blit(txt, (12, y + 4))
             y += 21
 
         if time.time() < self.message_until:
             msg = self.font.render(self.message, True, (255, 220, 120))
-            self.screen.blit(msg, (16, 14))
+            canvas.blit(msg, (16, 14))
+
+        if UI_ROTATE_180:
+            final_surface = pygame.transform.rotate(canvas, 180)
+            self.screen.blit(final_surface, (0, 0))
+        else:
+            self.screen.blit(canvas, (0, 0))
 
         pygame.display.flip()
 
