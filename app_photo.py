@@ -116,9 +116,8 @@ class CameraApp:
         self.display_rotation = int(os.getenv("PIMAGE_ROTATE", "0"))
         if self.display_rotation not in {0, 90, 180, 270}:
             self.display_rotation = 0
-        self.menu_label_rotation = int(os.getenv("PIMAGE_MENU_ROTATE", "0"))
-        if self.menu_label_rotation not in {0, 90, -90, 180, 270}:
-            self.menu_label_rotation = 0
+        # Keep overlay labels horizontal for touch readability in landscape.
+        self.menu_label_rotation = 0
         self.edge_buttons_per_side = max(2, min(6, int(os.getenv("PIMAGE_BTNS_SIDE", "6"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
@@ -614,7 +613,9 @@ class CameraApp:
                 if abs(self.gallery_angle) > 0.1:
                     img = pygame.transform.rotate(img, self.gallery_angle)
                 self.screen.blit(img, img.get_rect(center=(self.screen_w // 2, self.screen_h // 2)))
-                # Delete button overlay
+                # Gallery controls: back + delete.
+                pygame.draw.rect(self.screen, (45, 45, 60), (10, 10, 90, 40), border_radius=6)
+                self.screen.blit(self.small.render("BACK", True, (255,255,255)), (28, 20))
                 pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
                 self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
             pygame.display.flip(); return
@@ -685,7 +686,9 @@ class CameraApp:
             self.update_exposure_slider(x)
             return
         if self.gallery_mode:
-            if y < 50 and x > self.screen_w - 100:
+            if 10 <= x <= 100 and 10 <= y <= 50:
+                self.handle_action("gal_quit")
+            elif y < 50 and x > self.screen_w - 100:
                 self.handle_action("gal_quit")
             elif y > self.screen_h - 60 and x > self.screen_w - 120:
                 self.handle_action("gal_delete")
