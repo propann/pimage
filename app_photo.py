@@ -628,7 +628,7 @@ class CameraApp:
     def buttons(self):
         requested_per_row = self.edge_buttons_per_side
         # Keep controls inside the visible frame with a safe inset.
-        side_margin = 24
+        side_margin = 36
         row_gap = 8
         usable_w = self.screen_w - (side_margin * 2)
         min_button_w = 88
@@ -786,11 +786,11 @@ class CameraApp:
                 draw_rect = btn.get_rect(center=r.center)
                 self.screen.blit(btn, draw_rect.topleft)
                 self.drawn_button_regions.append((draw_rect, a))
-        # Quick exposure slider (EV) at top.
+        # Quick exposure slider (EV) at bottom.
         slider_w = min(420, self.screen_w - 260)
         slider_h = 18
         slider_x = (self.screen_w - slider_w) // 2
-        slider_y = 34
+        slider_y = self.screen_h - 34
         self.ev_slider_rect = pygame.Rect(slider_x, slider_y, slider_w, slider_h)
         ev_param = self.get_param("ExposureValue")
         if ev_param:
