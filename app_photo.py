@@ -168,6 +168,8 @@ class CameraApp:
         self.active_touches: Dict[int, Tuple[float, float]] = {}
         self.touch_taps: Dict[int, Tuple[float, float, float]] = {}
         self.gesture_baseline = None
+        self.overlay_rotation = -90
+        self.drawn_button_regions: List[Tuple[pygame.Rect, str]] = []
         self.ev_drag_active = False
         self.ev_slider_rect = pygame.Rect(0, 0, 0, 0)
         self.message, self.message_until, self.last_capture = "Ready", 0.0, "-"
@@ -604,6 +606,7 @@ class CameraApp:
         self.apply_all_controls()
 
     def draw(self, frame):
+        self.drawn_button_regions = []
         if self.gallery_mode:
             self.screen.fill((0,0,0))
             if self.gallery_base_image:
@@ -637,17 +640,19 @@ class CameraApp:
                 cx, cy = r.center
                 radius = r.width // 2
                 pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), radius, width=3)
+                self.drawn_button_regions.append((r, a))
             else:
                 # Transparent edge buttons on top of full-screen preview.
                 btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
                 btn.fill((20, 30, 40, 100))
-                self.screen.blit(btn, (r.x, r.y))
-                pygame.draw.rect(self.screen, (180, 220, 255, 130), r, width=1, border_radius=8)
-                # Keep labels horizontal by default; configurable via env if needed.
                 label = self.small.render(t, True, (240, 240, 240))
-                if self.menu_label_rotation:
-                    label = pygame.transform.rotate(label, self.menu_label_rotation)
-                self.screen.blit(label, label.get_rect(center=r.center))
+                pygame.draw.rect(btn, (180, 220, 255, 130), pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
+                btn.blit(label, label.get_rect(center=(r.width // 2, r.height // 2)))
+                if self.overlay_rotation:
+                    btn = pygame.transform.rotate(btn, self.overlay_rotation)
+                draw_rect = btn.get_rect(center=r.center)
+                self.screen.blit(btn, draw_rect.topleft)
+                self.drawn_button_regions.append((draw_rect, a))
         # Quick exposure slider (EV) for fast correction.
         slider_w = min(420, self.screen_w - 260)
         slider_h = 18
@@ -704,10 +709,16 @@ class CameraApp:
             else:
                 self.handle_action("gal_next")
             return
-        for r, _, a in self.buttons():
-            if r.collidepoint((x, y)):
-                self.handle_action(a)
-                return
+        if self.drawn_button_regions:
+            for r, a in self.drawn_button_regions:
+                if r.collidepoint((x, y)):
+                    self.handle_action(a)
+                    return
+        else:
+            for r, _, a in self.buttons():
+                if r.collidepoint((x, y)):
+                    self.handle_action(a)
+                    return
 
     def _touch_dist_angle(self) -> Tuple[float, float] | None:
         if len(self.active_touches) < 2:
