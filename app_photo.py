@@ -628,7 +628,7 @@ class CameraApp:
     def buttons(self):
         requested_per_row = self.edge_buttons_per_side
         # Keep controls inside the visible frame with a safe inset.
-        side_margin = 36
+        side_margin = 48
         row_gap = 8
         usable_w = self.screen_w - (side_margin * 2)
         min_button_w = 88
@@ -657,7 +657,8 @@ class CameraApp:
             return out
 
         edge_buttons = []
-        edge_buttons.extend(make_row(top_actions, 20))
+        # Leave headroom so top status line is clearly visible.
+        edge_buttons.extend(make_row(top_actions, 54))
         edge_buttons.extend(make_row(bot_actions, self.screen_h - button_h - 20))
         # Dedicated center shutter button always available on preview.
         shutter_size = min(110, self.screen_h // 5)
@@ -814,7 +815,11 @@ class CameraApp:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
             info_surface = self.small.render(" | ".join(top_info), True, colors["info"])
-            self.screen.blit(info_surface, info_surface.get_rect(midtop=(self.screen_w // 2, 6)))
+            info_rect = info_surface.get_rect(midtop=(self.screen_w // 2, 8))
+            info_bg = pygame.Surface((info_rect.width + 14, info_rect.height + 6), pygame.SRCALPHA)
+            info_bg.fill((10, 16, 26, 150))
+            self.screen.blit(info_bg, (info_rect.x - 7, info_rect.y - 3))
+            self.screen.blit(info_surface, info_rect)
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
         theme_lbl = f"TH {self.theme_name().upper()}"
         self.screen.blit(self.small.render(fx_lbl, True, colors["fx"]), (self.screen_w - 180, 12))
