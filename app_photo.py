@@ -128,6 +128,7 @@ class CameraApp:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
         self.small = pygame.font.SysFont("DejaVuSans", 19)
+        self.pixel_font = pygame.font.SysFont("DejaVuSansMono", 10, bold=True)
         self.draw_startup_splash("Initializing display", 0.12)
         self.camera = Picamera2()
         self.draw_startup_splash("Configuring camera", 0.35)
@@ -573,6 +574,12 @@ class CameraApp:
             self.theme_idx = (self.theme_idx + 1) % len(THEMES)
             self.notify(f"Theme {self.theme_name().upper()}")
             self.save_user_state()
+        elif action.startswith("theme_set_"):
+            name = action.replace("theme_set_", "", 1)
+            if name in THEMES:
+                self.theme_idx = THEMES.index(name)
+                self.notify(f"Theme {name.upper()}")
+                self.save_user_state()
         elif action.startswith("effect_set_"):
             name = action.replace("effect_set_", "", 1)
             if name in EFFECTS:
@@ -612,7 +619,7 @@ class CameraApp:
             return [("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("BURST", "burst"), ("VIDEO", "toggle_video"), ("GALLERY", "gallery"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("FX+", "effect_next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.SYSTEM:
             enc_label = f"ENC {'ON' if self.encoder_enabled else 'OFF'}"
-            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("THEME", "toggle_theme"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("TIMER", "toggle_timer"), ("FX+", "effect_next"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
+            return [("GALLERY", "gallery"), (enc_label, "toggle_encoder"), ("TH-CLS", "theme_set_classic"), ("TH-CYB", "theme_set_cyber"), ("TH-MIN", "theme_set_minimal"), ("SYNC", "toggle_sync"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("OFF", "shutdown"), ("BACK", "menu_prev")]
         return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
@@ -757,10 +764,17 @@ class CameraApp:
                 # Transparent edge buttons on top of full-screen preview.
                 btn = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
                 btn.fill(colors["btn_bg"])
-                label = self.small.render(t, True, colors["text"])
                 pygame.draw.rect(btn, colors["btn_edge"], pygame.Rect(0, 0, r.width, r.height), width=1, border_radius=8)
                 pygame.draw.line(btn, colors["btn_line"], (8, r.height - 3), (r.width - 8, r.height - 3), width=2)
-                btn.blit(label, label.get_rect(center=(r.width // 2, r.height // 2)))
+                if a.startswith("theme_set_"):
+                    # Pixel-art style text for theme selector buttons.
+                    tiny = self.pixel_font.render(t, False, colors["text"])
+                    scale = 2
+                    pix = pygame.transform.scale(tiny, (tiny.get_width() * scale, tiny.get_height() * scale))
+                    btn.blit(pix, pix.get_rect(center=(r.width // 2, r.height // 2)))
+                else:
+                    label = self.small.render(t, True, colors["text"])
+                    btn.blit(label, label.get_rect(center=(r.width // 2, r.height // 2)))
                 if self.overlay_rotation:
                     btn = pygame.transform.rotate(btn, self.overlay_rotation)
                 draw_rect = btn.get_rect(center=r.center)
@@ -1107,7 +1121,7 @@ class CameraApp:
 
         @app.route("/api/action/<cmd>", methods=["POST"])
         def action(cmd):
-            if cmd not in allowed_actions and not cmd.startswith("effect_set_"):
+            if cmd not in allowed_actions and not cmd.startswith("effect_set_") and not cmd.startswith("theme_set_"):
                 return "Unsupported action", 400
             self.handle_action(cmd)
             return jsonify({"ok": True, "action": cmd, **state_payload()})
