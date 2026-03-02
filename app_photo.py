@@ -433,6 +433,8 @@ class CameraApp:
                         self.load_gallery_image()
                 except Exception as e: logger.error(e)
         elif action == "gal_quit": self.gallery_mode = False
+        elif action == "edit":
+            self.notify("Edit module: coming soon", timeout=2.0)
         elif action == "param_up": self.params[self.selected].inc(); self.apply_all_controls()
         elif action == "param_down": self.params[self.selected].dec(); self.apply_all_controls()
         elif action == "next": self.selected = (self.selected+1)%len(self.params)
@@ -504,7 +506,7 @@ class CameraApp:
     def menu_buttons(self):
         m = self.current_menu()
         if m == Menu.CAPTURE:
-            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("GALLERY", "gallery"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("AE", "toggle_ae"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
+            return [("BURST", "burst"), ("VIDEO", "toggle_video"), ("TIMER", "toggle_timer"), ("GALLERY", "gallery"), ("EDIT", "edit"), ("FX+", "effect_next"), ("FX-", "effect_prev"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("SYNC", "toggle_sync"), ("AE", "toggle_ae"), ("NEXT", "menu_next")]
         if m == Menu.TUNE:
             return [("P+", "param_up"), ("P-", "param_down"), ("NEXT P", "next"), ("AE", "toggle_ae"), ("AWB", "toggle_awb_lock"), ("RAW", "toggle_raw"), ("PEAK", "toggle_peaking"), ("TIMER", "toggle_timer"), ("SYNC", "toggle_sync"), ("FX+", "effect_next"), ("NEXT", "menu_next"), ("BACK", "menu_prev")]
         if m == Menu.COLOR:
@@ -616,6 +618,8 @@ class CameraApp:
                 # Gallery controls: back + delete.
                 pygame.draw.rect(self.screen, (45, 45, 60), (10, 10, 90, 40), border_radius=6)
                 self.screen.blit(self.small.render("BACK", True, (255,255,255)), (28, 20))
+                pygame.draw.rect(self.screen, (45, 70, 55), (110, 10, 90, 40), border_radius=6)
+                self.screen.blit(self.small.render("EDIT", True, (255,255,255)), (136, 20))
                 pygame.draw.rect(self.screen, (150, 0, 0), (self.screen_w - 100, self.screen_h - 50, 90, 40), border_radius=5)
                 self.screen.blit(self.small.render("DELETE", True, (255,255,255)), (self.screen_w - 85, self.screen_h - 40))
             pygame.display.flip(); return
@@ -688,6 +692,8 @@ class CameraApp:
         if self.gallery_mode:
             if 10 <= x <= 100 and 10 <= y <= 50:
                 self.handle_action("gal_quit")
+            elif 110 <= x <= 200 and 10 <= y <= 50:
+                self.handle_action("edit")
             elif y < 50 and x > self.screen_w - 100:
                 self.handle_action("gal_quit")
             elif y > self.screen_h - 60 and x > self.screen_w - 120:
