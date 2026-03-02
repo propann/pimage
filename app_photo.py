@@ -177,7 +177,10 @@ class CameraApp:
         self.active_touches: Dict[int, Tuple[float, float]] = {}
         self.touch_taps: Dict[int, Tuple[float, float, float]] = {}
         self.gesture_baseline = None
-        self.overlay_rotation = 0
+        # Rotate overlay controls to the right by default (clockwise).
+        self.overlay_rotation = int(os.getenv("PIMAGE_OVERLAY_ROTATE", "-90"))
+        if self.overlay_rotation not in {0, 90, -90, 180, 270}:
+            self.overlay_rotation = -90
         self.drawn_button_regions: List[Tuple[pygame.Rect, str]] = []
         self.ev_drag_active = False
         self.ev_slider_rect = pygame.Rect(0, 0, 0, 0)

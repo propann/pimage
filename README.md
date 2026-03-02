@@ -64,6 +64,7 @@ PIMAGE_ENCODER=0 python3 app_photo.py
 ```
 - Rotation d'affichage (optionnel): `PIMAGE_ROTATE=0|90|180|270` (défaut: `0`)
 - Rotation labels menu (optionnel): `PIMAGE_MENU_ROTATE=0|90|-90|180`
+- Rotation overlay boutons (optionnel): `PIMAGE_OVERLAY_ROTATE=-90|0|90|180` (défaut: `-90`, vers la droite)
 - UI tactile: boutons transparents sur les bords + bouton central de capture.
 - Nombre de boutons par côté (optionnel): `PIMAGE_BTNS_SIDE=2..6` (défaut: `6`).
 - Filtres live: menu `EFFECT` (none, noir, vintage, cool, cyber, thermal, glitch).
