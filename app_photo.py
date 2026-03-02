@@ -810,8 +810,10 @@ class CameraApp:
         if self.battery_percent >= 0:
             top_info.append(f"BAT {int(self.battery_percent)}%")
         if top_info:
-            # Keep system info on the left side.
-            self.screen.blit(self.small.render(" | ".join(top_info), True, colors["info"]), (10, (self.screen_h // 2) - 12))
+            info_surface = self.small.render(" | ".join(top_info), True, colors["info"])
+            if self.overlay_rotation:
+                info_surface = pygame.transform.rotate(info_surface, self.overlay_rotation)
+            self.screen.blit(info_surface, info_surface.get_rect(topleft=(10, 10)))
         fx_lbl = f"FX {EFFECTS[self.effect_idx].upper()}"
         theme_lbl = f"TH {self.theme_name().upper()}"
         self.screen.blit(self.small.render(fx_lbl, True, colors["fx"]), (self.screen_w - 180, 12))
