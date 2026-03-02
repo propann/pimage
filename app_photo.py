@@ -415,6 +415,7 @@ class CameraApp:
                 ("AE ON/OFF", "toggle_ae"),
                 ("AWB NEXT", "next_awb"),
                 ("NEXT MENU", "menu_next"),
+                ("PREV MENU", "menu_prev"),
             ]
         if menu == Menu.COLOR:
             return [
@@ -425,6 +426,7 @@ class CameraApp:
                 ("SAVE SLOT B", "save:B"),
                 ("LOAD SLOT B", "load:B"),
                 ("NEXT MENU", "menu_next"),
+                ("PREV MENU", "menu_prev"),
             ]
         if menu == Menu.EFFECT:
             return [
@@ -444,6 +446,7 @@ class CameraApp:
             ("SAVE SLOT B", "save:B"),
             ("LOAD SLOT B", "load:B"),
             ("NEXT MENU", "menu_next"),
+            ("PREV MENU", "menu_prev"),
         ]
 
     def buttons(self) -> List[Tuple[pygame.Rect, str, str]]:
