@@ -123,7 +123,7 @@ class CameraApp:
         self.edge_buttons_per_side = max(2, min(6, int(os.getenv("PIMAGE_BTNS_SIDE", "6"))))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 21)
-        self.small = pygame.font.SysFont("DejaVuSans", 17)
+        self.small = pygame.font.SysFont("DejaVuSans", 19)
         self.camera = Picamera2()
         config = self.camera.create_preview_configuration(main={"size": (self.preview_w, self.screen_h), "format": "RGB888"}, buffer_count=3)
         self.camera.configure(config)
@@ -525,15 +525,18 @@ class CameraApp:
         return [("NEXT", "menu_next"), ("BACK", "menu_prev")]
 
     def buttons(self):
-        max_visible = self.edge_buttons_per_side * 2
-        actions = self.menu_buttons()[:max_visible]
-        row_cap = self.edge_buttons_per_side
-        top_actions = actions[:row_cap]
-        bot_actions = actions[row_cap:row_cap * 2]
+        requested_per_row = self.edge_buttons_per_side
         side_margin = 8
         row_gap = 8
-        button_h = max(34, min(48, self.screen_h // 10))
         usable_w = self.screen_w - (side_margin * 2)
+        min_button_w = 88
+        auto_per_row = max(3, usable_w // min_button_w)
+        per_row = max(3, min(requested_per_row, auto_per_row))
+        max_visible = per_row * 2
+        actions = self.menu_buttons()[:max_visible]
+        top_actions = actions[:per_row]
+        bot_actions = actions[per_row:per_row * 2]
+        button_h = max(40, min(56, self.screen_h // 9))
 
         def make_row(row_actions, y):
             out = []
@@ -541,7 +544,7 @@ class CameraApp:
                 return out
             n = len(row_actions)
             gap = 6
-            bw = max(72, int((usable_w - gap * (n - 1)) / n))
+            bw = max(min_button_w, int((usable_w - gap * (n - 1)) / n))
             total = bw * n + gap * (n - 1)
             start_x = (self.screen_w - total) // 2
             for i, (title, action) in enumerate(row_actions):
