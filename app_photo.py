@@ -4,19 +4,20 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pygame
 
 from overlays import GridOverlay, HistogramOverlay
-from pimage.config import AppConfig, load_config
+from pimage.config import load_config
 from pimage.effects import apply_effect as apply_preview_effect
 from pimage.storage import build_capture_filename, get_storage_status
 from ui_hud import HudUI
@@ -30,6 +31,11 @@ try:  # optional dependency: pip install pygame-vkeyboard
     import vkeyboard
 except ImportError:  # pragma: no cover
     vkeyboard = None
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
 
 
 DEFAULT_SCREEN_W = 800
@@ -339,7 +345,11 @@ class CameraApp:
             self.config.camera2_enabled = not self.config.camera2_enabled
             self.notify(f"Capteur 2 {'ON' if self.config.camera2_enabled else 'OFF'}")
         elif action == "save_config":
-            CONFIG_FILE.write_text(yaml.safe_dump(self.config.to_dict(), sort_keys=False, allow_unicode=True))
+            if yaml is not None:
+                serialized = yaml.safe_dump(self.config.to_dict(), sort_keys=False, allow_unicode=True)
+            else:
+                serialized = json.dumps(self.config.to_dict(), ensure_ascii=False, indent=2)
+            CONFIG_FILE.write_text(serialized, encoding="utf-8")
             self.notify("config.yaml sauvegardé")
 
     def draw_camera_view(self, frame: np.ndarray) -> None:
@@ -352,7 +362,7 @@ class CameraApp:
         self.grid_overlay.draw(canvas, preview_rect)
         self.histogram.update(frame)
 
-        cards = self.hud.build_cards([
+        self.hud.build_cards([
             ("aperture", "Ouverture", f"f/{self.aperture:.1f}"),
             ("shutter", "Vitesse", f"1/{int(self.shutter)}"),
             ("iso", "ISO", str(int(self.iso))),
