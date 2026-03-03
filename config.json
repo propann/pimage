@@ -1,0 +1,14 @@
+{
+  "paths": {
+    "photos": "/home/pi/photos"
+  },
+  "screen": {
+    "width": 800,
+    "height": 480,
+    "panel_width": 320
+  },
+  "camera": {
+    "index": 0,
+    "sensor2_enabled": false
+  }
+}

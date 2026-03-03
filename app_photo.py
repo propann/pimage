@@ -1,52 +1,51 @@
 #!/usr/bin/env python3
-"""Mini camera app for Raspberry Pi 4 / CM4 with touchscreen-first controls.
-
-Features:
-- Live preview via Picamera2 + pygame display
-- One-tap photo capture
-- Quick setting panels (exposure/awb/color/focus-ish controls)
-- Creative color profiles, realtime effects, and persistent user slots
-- Multiple framing grids overlay modes
-
-Designed for DSI touch displays in landscape.
-"""
+"""PImage camera app with animated menus, touch keyboard modal and post-capture editor."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pygame
 
 try:
     from picamera2 import Picamera2
-except ImportError:  # pragma: no cover - not available on non-RPi dev machines
+except ImportError:  # pragma: no cover
     Picamera2 = None
 
-try:
-    import RPi.GPIO as GPIO
-except ImportError:  # pragma: no cover - not available on non-RPi dev machines
-    GPIO = None
+try:  # optional dependency: pip install pygame-vkeyboard
+    import vkeyboard
+except ImportError:  # pragma: no cover
+    vkeyboard = None
 
 
 SCREEN_W = 800
 SCREEN_H = 480
 PANEL_W = 320
 PREVIEW_W = SCREEN_W - PANEL_W
-BUTTON_H = 46
+BUTTON_H = 44
 MARGIN = 10
-PHOTO_DIR = Path.home() / "photos"
-PROFILE_FILE = Path.home() / ".pimage_profiles.json"
-GRID_COLOR = (0, 220, 180)
-UI_ROTATE_180 = True
+CONFIG_FILE = Path("config.json")
+
+
+class Menu(str, Enum):
+    CAPTURE = "Capture"
+    TUNE = "Tune"
+    COLOR = "Color"
+    EFFECT = "Effect"
+    SYSTEM = "System"
+
+
+class View(str, Enum):
+    CAMERA = "camera"
+    EDIT = "edit"
 
 
 @dataclass
@@ -65,483 +64,400 @@ class CameraParam:
         self.value = max(self.min_val, self.value - self.step)
 
 
-class Menu(str, Enum):
-    CAPTURE = "Capture"
-    TUNE = "Tune"
-    COLOR = "Color"
-    EFFECT = "Effect"
-    SYSTEM = "System"
+@dataclass
+class AppConfig:
+    photos_path: str = str(Path.home() / "photos")
+    screen_w: int = SCREEN_W
+    screen_h: int = SCREEN_H
+    panel_w: int = PANEL_W
+    camera_index: int = 0
+    camera2_enabled: bool = False
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "paths": {"photos": self.photos_path},
+            "screen": {"width": self.screen_w, "height": self.screen_h, "panel_width": self.panel_w},
+            "camera": {"index": self.camera_index, "sensor2_enabled": self.camera2_enabled},
+        }
 
 
-COLOR_PROFILES: Dict[str, Dict[str, float]] = {
-    "natural": {"Saturation": 1.0, "Contrast": 1.0, "Sharpness": 1.0, "Brightness": 0.0},
-    "vivid": {"Saturation": 1.8, "Contrast": 1.25, "Sharpness": 1.5, "Brightness": 0.05},
-    "cinema": {"Saturation": 0.85, "Contrast": 0.92, "Sharpness": 0.7, "Brightness": -0.02},
-    "mono": {"Saturation": 0.0, "Contrast": 1.45, "Sharpness": 1.4, "Brightness": 0.0},
-    "retro": {"Saturation": 1.2, "Contrast": 0.88, "Sharpness": 0.5, "Brightness": 0.12},
-}
-
-EFFECTS = ["none", "noir", "vintage", "cyber", "thermal"]
-GRIDS = [
-    "off",
-    "thirds",
-    "quarters",
-    "crosshair",
-    "diagonal-x",
-    "triangles",
-    "golden-phi",
-    "dense-6x6",
-]
+def load_config(path: Path = CONFIG_FILE) -> AppConfig:
+    cfg = AppConfig()
+    if path.exists():
+        raw = json.loads(path.read_text())
+        cfg.photos_path = str(raw.get("paths", {}).get("photos", cfg.photos_path))
+        cfg.screen_w = int(raw.get("screen", {}).get("width", cfg.screen_w))
+        cfg.screen_h = int(raw.get("screen", {}).get("height", cfg.screen_h))
+        cfg.panel_w = int(raw.get("screen", {}).get("panel_width", cfg.panel_w))
+        cfg.camera_index = int(raw.get("camera", {}).get("index", cfg.camera_index))
+        cfg.camera2_enabled = bool(raw.get("camera", {}).get("sensor2_enabled", cfg.camera2_enabled))
+    path.write_text(json.dumps(cfg.to_dict(), indent=2))
+    return cfg
 
 
 class CameraApp:
     def __init__(self) -> None:
         if Picamera2 is None:
-            raise RuntimeError(
-                "Picamera2 is not installed. Use Raspberry Pi OS + sudo apt install python3-picamera2"
-            )
+            raise RuntimeError("Picamera2 manquant sur cette machine")
 
-        PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+        self.config = load_config()
+        self.photo_dir = Path(self.config.photos_path)
+        self.photo_dir.mkdir(parents=True, exist_ok=True)
+
         pygame.init()
-        pygame.display.set_caption("PImage Camera")
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
+        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("DejaVuSans", 21)
+        self.font = pygame.font.SysFont("DejaVuSans", 22)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
 
-        self.camera = Picamera2()
-        config = self.camera.create_preview_configuration(
+        self.camera = Picamera2(self.config.camera_index)
+        self.cam2 = Picamera2(1) if self.config.camera2_enabled else None
+        preview_cfg = self.camera.create_preview_configuration(
             main={"size": (PREVIEW_W, SCREEN_H), "format": "RGB888"},
             buffer_count=3,
         )
-        self.camera.configure(config)
+        self.camera.configure(preview_cfg)
         self.camera.start()
 
-        self.params: List[CameraParam] = [
+        self.params = [
             CameraParam("Expo EV", "ExposureValue", -8.0, 8.0, 0.2, 0.0),
-            CameraParam("Gain", "AnalogueGain", 1.0, 16.0, 0.2, 1.0),
-            CameraParam("Bright", "Brightness", -1.0, 1.0, 0.05, 0.0),
+            CameraParam("Brightness", "Brightness", -1.0, 1.0, 0.05, 0.0),
             CameraParam("Contrast", "Contrast", 0.0, 2.5, 0.05, 1.0),
             CameraParam("Saturation", "Saturation", 0.0, 3.0, 0.05, 1.0),
-            CameraParam("Sharp", "Sharpness", 0.0, 4.0, 0.1, 1.0),
-            CameraParam("Exposure µs", "ExposureTime", 100, 30000, 100, 8000),
         ]
         self.selected = 0
-        self.auto_exposure = True
-        self.awb_mode_idx = 0
-        self.awb_modes: List[Tuple[str, int]] = [
-            ("Auto", 0),
-            ("Tungsten", 1),
-            ("Fluo", 2),
-            ("Indoor", 3),
-            ("Daylight", 4),
-            ("Cloudy", 5),
-        ]
-
-        self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.SYSTEM]
-        self.menu_idx = 0
-        self.color_profile = "natural"
-        self.effect_idx = 0
-        self.grid_idx = 1
-
         self.message = "Ready"
         self.message_until = 0.0
         self.last_capture = "-"
-        self.hardware_summary = self.describe_hardware()
+        self.menu_order = [Menu.CAPTURE, Menu.TUNE, Menu.COLOR, Menu.EFFECT, Menu.SYSTEM]
+        self.menu_idx = 0
+        self.prev_menu_idx = 0
+        self.menu_anim_start = 0.0
+        self.menu_anim_duration = 0.4
 
-        self.apply_color_profile("natural", notify=False)
-        self.apply_all_controls()
+        self.view = View.CAMERA
+        self.effect_idx = 0
+        self.effects = ["none", "noir", "vintage"]
 
-    def setup_encoder(self) -> None:
-        if GPIO is None:
-            return
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup([ENC_CLK, ENC_DT, ENC_SW], GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        self.enc_last_clk = GPIO.input(ENC_CLK)
-        self.enc_last_sw = GPIO.input(ENC_SW)
-        self.encoder_enabled = True
+        self.rename_modal = False
+        self.rename_text = ""
+        self.keyboard_widget = None
+        self.caps = False
 
-    def notify(self, text: str, timeout: float = 1.6) -> None:
-        self.message = text
+        self.edit_surface: Optional[pygame.Surface] = None
+        self.edit_history: List[pygame.Surface] = []
+        self.crop_rect = pygame.Rect(80, 60, 260, 220)
+        self.crop_drag = False
+        self.crop_ratio_idx = 0
+        self.crop_ratios = [(1, 1), (4, 3), (16, 9)]
+        self.edit_selected_slider = 0
+        self.edit_sliders: Dict[str, float] = {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0, "hue": 0.0}
+
+        self.apply_controls()
+
+    def notify(self, txt: str, timeout: float = 1.6) -> None:
+        self.message = txt
         self.message_until = time.time() + timeout
-
-    def describe_hardware(self) -> str:
-        try:
-            controls = getattr(self.camera, "camera_controls", {})
-            ccount = len(controls)
-            sensor = self.camera.camera_properties.get("Model", "Unknown")
-            return f"Sensor={sensor} controls={ccount}"
-        except Exception:
-            return "Sensor info unavailable"
-
-    def read_system_status(self) -> str:
-        cpu_txt = "CPU --"
-        sd_txt = "SD --"
-        temp_path = Path("/sys/class/thermal/thermal_zone0/temp")
-        if temp_path.exists():
-            try:
-                raw = int(temp_path.read_text().strip())
-                cpu_txt = f"CPU {raw / 1000:.0f}C"
-            except Exception:
-                pass
-
-        try:
-            usage = shutil.disk_usage(str(Path.home()))
-            used_pct = (usage.used / usage.total) * 100 if usage.total else 0.0
-            sd_txt = f"SD {used_pct:.0f}%"
-        except Exception:
-            pass
-
-        return f"{cpu_txt} | {sd_txt}"
-
-    def save_profile(self, slot: str) -> None:
-        payload = {
-            "auto_exposure": self.auto_exposure,
-            "awb_mode_idx": self.awb_mode_idx,
-            "color_profile": self.color_profile,
-            "effect_idx": self.effect_idx,
-            "grid_idx": self.grid_idx,
-            "params": {p.key: p.value for p in self.params},
-        }
-        data = {}
-        if PROFILE_FILE.exists():
-            data = json.loads(PROFILE_FILE.read_text())
-        data[slot] = payload
-        PROFILE_FILE.write_text(json.dumps(data, indent=2))
-        self.notify(f"Profile {slot} saved")
-
-    def load_profile(self, slot: str) -> None:
-        if not PROFILE_FILE.exists():
-            self.notify("No saved profile file")
-            return
-        data = json.loads(PROFILE_FILE.read_text())
-        if slot not in data:
-            self.notify(f"Slot {slot} is empty")
-            return
-        saved = data[slot]
-        self.auto_exposure = bool(saved.get("auto_exposure", True))
-        self.awb_mode_idx = int(saved.get("awb_mode_idx", 0)) % len(self.awb_modes)
-        self.effect_idx = int(saved.get("effect_idx", 0)) % len(EFFECTS)
-        self.grid_idx = int(saved.get("grid_idx", 1)) % len(GRIDS)
-        self.color_profile = str(saved.get("color_profile", "natural"))
-
-        values = saved.get("params", {})
-        for param in self.params:
-            if param.key in values:
-                param.value = float(values[param.key])
-        self.apply_all_controls()
-        self.notify(f"Profile {slot} loaded")
-
-    def apply_all_controls(self) -> None:
-        controls: Dict[str, float | int | bool] = {
-            "AeEnable": self.auto_exposure,
-            "AwbMode": self.awb_modes[self.awb_mode_idx][1],
-        }
-        for param in self.params:
-            if param.key == "ExposureTime" and self.auto_exposure:
-                continue
-            controls[param.key] = int(param.value) if param.key == "ExposureTime" else param.value
-        self.camera.set_controls(controls)
-
-    def apply_color_profile(self, name: str, notify: bool = True) -> None:
-        if name not in COLOR_PROFILES:
-            return
-        self.color_profile = name
-        for param in self.params:
-            if param.key in COLOR_PROFILES[name]:
-                param.value = COLOR_PROFILES[name][param.key]
-        self.apply_all_controls()
-        if notify:
-            self.notify(f"Color profile: {name}")
-
-    def cycle_color_profile(self, direction: int = 1) -> None:
-        names = list(COLOR_PROFILES.keys())
-        idx = names.index(self.color_profile)
-        self.apply_color_profile(names[(idx + direction) % len(names)])
-
-    def cycle_effect(self, direction: int = 1) -> None:
-        self.effect_idx = (self.effect_idx + direction) % len(EFFECTS)
-        self.notify(f"Effect: {EFFECTS[self.effect_idx]}")
-
-    def cycle_grid(self, direction: int = 1) -> None:
-        self.grid_idx = (self.grid_idx + direction) % len(GRIDS)
-        self.notify(f"Grid: {GRIDS[self.grid_idx]}")
-
-    def apply_effect(self, frame: np.ndarray) -> np.ndarray:
-        effect = EFFECTS[self.effect_idx]
-        out = frame.astype(np.float32)
-
-        if effect == "noir":
-            gray = out[:, :, 0] * 0.3 + out[:, :, 1] * 0.59 + out[:, :, 2] * 0.11
-            out[:, :, 0] = gray
-            out[:, :, 1] = gray
-            out[:, :, 2] = gray
-        elif effect == "vintage":
-            out[:, :, 0] *= 1.10
-            out[:, :, 1] *= 1.0
-            out[:, :, 2] *= 0.82
-        elif effect == "cyber":
-            out[:, :, 0] *= 0.7
-            out[:, :, 1] *= 1.25
-            out[:, :, 2] *= 1.3
-        elif effect == "thermal":
-            lum = (out[:, :, 0] + out[:, :, 1] + out[:, :, 2]) / 3.0
-            out[:, :, 0] = np.clip((lum - 64) * 2.5, 0, 255)
-            out[:, :, 1] = np.clip((lum - 16) * 1.7, 0, 255)
-            out[:, :, 2] = np.clip(255 - lum * 1.2, 0, 255)
-
-        return np.clip(out, 0, 255).astype(np.uint8)
-
-    def draw_grid(self) -> None:
-        mode = GRIDS[self.grid_idx]
-        if mode == "off":
-            return
-
-        w, h = PREVIEW_W, SCREEN_H
-        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
-
-        def vline(x: float, alpha: int = 165, thick: int = 1) -> None:
-            pygame.draw.line(overlay, (*GRID_COLOR, alpha), (int(x), 0), (int(x), h), thick)
-
-        def hline(y: float, alpha: int = 165, thick: int = 1) -> None:
-            pygame.draw.line(overlay, (*GRID_COLOR, alpha), (0, int(y)), (w, int(y)), thick)
-
-        if mode == "thirds":
-            vline(w / 3)
-            vline(2 * w / 3)
-            hline(h / 3)
-            hline(2 * h / 3)
-        elif mode == "quarters":
-            for i in range(1, 4):
-                vline((w / 4) * i)
-                hline((h / 4) * i)
-        elif mode == "crosshair":
-            vline(w / 2, alpha=190, thick=2)
-            hline(h / 2, alpha=190, thick=2)
-        elif mode == "diagonal-x":
-            pygame.draw.line(overlay, (*GRID_COLOR, 160), (0, 0), (w, h), 1)
-            pygame.draw.line(overlay, (*GRID_COLOR, 160), (w, 0), (0, h), 1)
-        elif mode == "triangles":
-            # Dynamic symmetry-ish aid: one diagonal + two triangles from opposite corners.
-            pygame.draw.line(overlay, (*GRID_COLOR, 170), (0, h), (w, 0), 1)
-            pygame.draw.line(overlay, (*GRID_COLOR, 150), (0, 0), (w * 0.5, h), 1)
-            pygame.draw.line(overlay, (*GRID_COLOR, 150), (w, h), (w * 0.5, 0), 1)
-        elif mode == "golden-phi":
-            phi = 0.61803398875
-            vline(w * phi)
-            vline(w * (1 - phi))
-            hline(h * phi)
-            hline(h * (1 - phi))
-        elif mode == "dense-6x6":
-            for i in range(1, 6):
-                vline((w / 6) * i, alpha=120)
-                hline((h / 6) * i, alpha=120)
-
-        self.screen.blit(overlay, (0, 0))
-
-    def capture(self) -> None:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = PHOTO_DIR / f"img_{ts}.jpg"
-        self.camera.capture_file(str(path))
-        self.last_capture = path.name
-        self.notify(f"Saved {path.name}", timeout=2.2)
 
     def current_menu(self) -> Menu:
         return self.menu_order[self.menu_idx]
 
-    def handle_action(self, action: str) -> None:
-        if action == "capture":
-            self.capture()
-        elif action == "gallery":
-            self.enter_gallery()
-        elif action == "quit":
-            raise SystemExit
-        elif action == "param_up":
-            self.params[self.selected].inc()
-            self.apply_all_controls()
-        elif action == "param_down":
-            self.params[self.selected].dec()
-            self.apply_all_controls()
-        elif action == "next":
-            self.selected = (self.selected + 1) % len(self.params)
-        elif action == "prev":
-            self.selected = (self.selected - 1) % len(self.params)
-        elif action == "toggle_ae":
-            self.auto_exposure = not self.auto_exposure
-            self.apply_all_controls()
-            self.notify(f"AE {'ON' if self.auto_exposure else 'OFF'}")
-        elif action == "next_awb":
-            self.awb_mode_idx = (self.awb_mode_idx + 1) % len(self.awb_modes)
-            self.apply_all_controls()
-            self.notify(f"AWB {self.awb_modes[self.awb_mode_idx][0]}")
-        elif action == "profile_next":
-            self.cycle_color_profile(1)
-        elif action == "profile_prev":
-            self.cycle_color_profile(-1)
-        elif action == "effect_next":
-            self.cycle_effect(1)
-        elif action == "effect_prev":
-            self.cycle_effect(-1)
-        elif action == "grid_next":
-            self.cycle_grid(1)
-        elif action == "grid_prev":
-            self.cycle_grid(-1)
-        elif action == "menu_next":
-            self.menu_idx = (self.menu_idx + 1) % len(self.menu_order)
-        elif action == "menu_prev":
-            self.menu_idx = (self.menu_idx - 1) % len(self.menu_order)
-        elif action.startswith("save:"):
-            self.save_profile(action.split(":", 1)[1])
-        elif action.startswith("load:"):
-            self.load_profile(action.split(":", 1)[1])
+    def ease_out_quad(self, t: float) -> float:
+        return 1 - (1 - t) * (1 - t)
+
+    def gaussian_blur_preview(self, arr: np.ndarray) -> np.ndarray:
+        # léger blur 3x3 compatible Pi4
+        kernel = np.array([1.0, 2.0, 1.0], dtype=np.float32)
+        kernel = kernel / kernel.sum()
+        out = arr.astype(np.float32)
+        temp = np.zeros_like(out)
+        for i, w in enumerate(kernel):
+            temp += np.roll(out, i - 1, axis=1) * w
+        out2 = np.zeros_like(temp)
+        for i, w in enumerate(kernel):
+            out2 += np.roll(temp, i - 1, axis=0) * w
+        return np.clip(out2, 0, 255).astype(np.uint8)
+
+    def apply_effect(self, frame: np.ndarray) -> np.ndarray:
+        fx = self.effects[self.effect_idx]
+        out = frame.astype(np.float32)
+        if fx == "noir":
+            g = out[:, :, 0] * 0.3 + out[:, :, 1] * 0.59 + out[:, :, 2] * 0.11
+            out[:, :, 0] = g
+            out[:, :, 1] = g
+            out[:, :, 2] = g
+        elif fx == "vintage":
+            out[:, :, 0] *= 1.08
+            out[:, :, 2] *= 0.82
+        return np.clip(out, 0, 255).astype(np.uint8)
+
+    def apply_controls(self) -> None:
+        controls = {p.key: p.value for p in self.params}
+        self.camera.set_controls(controls)
 
     def menu_buttons(self) -> List[Tuple[str, str]]:
         menu = self.current_menu()
         if menu == Menu.CAPTURE:
-            return [
-                ("CAPTURE", "capture"),
-                ("GRID PREV", "grid_prev"),
-                ("GRID NEXT", "grid_next"),
-                ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
-                ("QUIT", "quit"),
-            ]
+            return [("CAPTURE", "capture"), ("RENOMMER", "rename"), ("EDIT LAST", "edit"), ("NEXT", "menu_next")]
         if menu == Menu.TUNE:
-            return [
-                ("PARAM -", "param_down"),
-                ("PARAM +", "param_up"),
-                ("PARAM PREV", "prev"),
-                ("PARAM NEXT", "next"),
-                ("AE ON/OFF", "toggle_ae"),
-                ("AWB NEXT", "next_awb"),
-                ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
-            ]
+            return [("PARAM -", "param_down"), ("PARAM +", "param_up"), ("NEXT PARAM", "next_param"), ("NEXT", "menu_next")]
         if menu == Menu.COLOR:
-            return [
-                ("PROFILE PREV", "profile_prev"),
-                ("PROFILE NEXT", "profile_next"),
-                ("SAVE SLOT A", "save:A"),
-                ("LOAD SLOT A", "load:A"),
-                ("SAVE SLOT B", "save:B"),
-                ("LOAD SLOT B", "load:B"),
-                ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
-            ]
+            return [("FX PREV", "fx_prev"), ("FX NEXT", "fx_next"), ("NEXT", "menu_next"), ("PREV", "menu_prev")]
         if menu == Menu.EFFECT:
-            return [
-                ("EFFECT PREV", "effect_prev"),
-                ("EFFECT NEXT", "effect_next"),
-                ("GRID PREV", "grid_prev"),
-                ("GRID NEXT", "grid_next"),
-                ("CAPTURE", "capture"),
-                ("NEXT MENU", "menu_next"),
-                ("PREV MENU", "menu_prev"),
-            ]
-        return [
-            ("GRID PREV", "grid_prev"),
-            ("GRID NEXT", "grid_next"),
-            ("SAVE SLOT A", "save:A"),
-            ("LOAD SLOT A", "load:A"),
-            ("SAVE SLOT B", "save:B"),
-            ("LOAD SLOT B", "load:B"),
-            ("NEXT MENU", "menu_next"),
-            ("PREV MENU", "menu_prev"),
-        ]
+            return [("CAPTURE", "capture"), ("EDIT", "edit"), ("NEXT", "menu_next"), ("PREV", "menu_prev")]
+        return [("Hardware: capteur2", "toggle_sensor2"), ("Sauver config", "save_config"), ("NEXT", "menu_next"), ("PREV", "menu_prev")]
 
     def buttons(self) -> List[Tuple[pygame.Rect, str, str]]:
-        x = PREVIEW_W + MARGIN
-        y = 60
+        x, y = PREVIEW_W + MARGIN, 60
         w = PANEL_W - 2 * MARGIN
-        out: List[Tuple[pygame.Rect, str, str]] = []
-
+        out = []
         for title, action in self.menu_buttons():
-            rect = pygame.Rect(x, y, w, BUTTON_H)
-            out.append((rect, title, action))
-            y += BUTTON_H + 7
+            out.append((pygame.Rect(x, y, w, BUTTON_H), title, action))
+            y += BUTTON_H + 8
         return out
 
-    def draw(self, frame: np.ndarray) -> None:
-        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
+    def capture(self) -> None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = self.photo_dir / f"img_{ts}.jpg"
+        self.camera.capture_file(str(out))
+        self.last_capture = out.name
+        self.notify(f"Saved {out.name}", 2.0)
+        self.load_last_into_editor()
 
-        frame_fx = self.apply_effect(frame)
-        surf = pygame.surfarray.make_surface(frame_fx.swapaxes(0, 1))
+    def push_undo(self) -> None:
+        if self.edit_surface is None:
+            return
+        self.edit_history.append(self.edit_surface.copy())
+        self.edit_history = self.edit_history[-5:]
+
+    def load_last_into_editor(self) -> None:
+        if self.last_capture == "-":
+            return
+        path = self.photo_dir / self.last_capture
+        if not path.exists():
+            return
+        self.edit_surface = pygame.image.load(str(path)).convert()
+        self.edit_history = [self.edit_surface.copy()]
+
+    def edit_apply_sliders(self) -> None:
+        if self.edit_surface is None:
+            return
+        arr = pygame.surfarray.array3d(self.edit_history[-1]).swapaxes(0, 1).astype(np.float32)
+        arr += self.edit_sliders["brightness"] * 60.0
+        arr = (arr - 127.5) * self.edit_sliders["contrast"] + 127.5
+        gray = arr.mean(axis=2, keepdims=True)
+        arr = gray + (arr - gray) * self.edit_sliders["saturation"]
+        hue_shift = self.edit_sliders["hue"]
+        arr[:, :, 0] = np.roll(arr[:, :, 0], int(hue_shift), axis=0)
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+        self.edit_surface = pygame.surfarray.make_surface(arr.swapaxes(0, 1))
+
+    def open_rename_modal(self) -> None:
+        self.rename_modal = True
+        self.rename_text = ""
+        if vkeyboard:
+            layout = vkeyboard.QwertyLayout(vkeyboard.Key) if hasattr(vkeyboard, "QwertyLayout") else None
+            self.keyboard_widget = vkeyboard.VKeyboard(
+                self.screen,
+                text_consumer=self.on_virtual_key,
+                main_layout=layout,
+                show_text=False,
+            )
+
+    def on_virtual_key(self, text: str) -> None:
+        self.rename_text = text
+
+    def rename_last(self) -> None:
+        if self.last_capture == "-":
+            return
+        src = self.photo_dir / self.last_capture
+        if not src.exists() or not self.rename_text.strip():
+            return
+        dst = self.photo_dir / f"{self.rename_text.strip()}.jpg"
+        src.rename(dst)
+        self.last_capture = dst.name
+        self.notify(f"Renommé: {dst.name}")
+
+    def save_edited(self) -> None:
+        if self.edit_surface is None:
+            return
+        out = self.photo_dir / f"edit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        pygame.image.save(self.edit_surface, str(out))
+        self.last_capture = out.name
+        self.notify(f"Edit saved: {out.name}")
+
+    def handle_action(self, action: str) -> None:
+        if action == "capture":
+            self.capture()
+        elif action == "rename":
+            self.open_rename_modal()
+        elif action == "edit":
+            self.load_last_into_editor()
+            if self.edit_surface is not None:
+                self.view = View.EDIT
+        elif action == "menu_next":
+            self.prev_menu_idx = self.menu_idx
+            self.menu_idx = (self.menu_idx + 1) % len(self.menu_order)
+            self.menu_anim_start = time.time()
+        elif action == "menu_prev":
+            self.prev_menu_idx = self.menu_idx
+            self.menu_idx = (self.menu_idx - 1) % len(self.menu_order)
+            self.menu_anim_start = time.time()
+        elif action == "next_param":
+            self.selected = (self.selected + 1) % len(self.params)
+        elif action == "param_up":
+            self.params[self.selected].inc()
+            self.apply_controls()
+        elif action == "param_down":
+            self.params[self.selected].dec()
+            self.apply_controls()
+        elif action == "fx_next":
+            self.effect_idx = (self.effect_idx + 1) % len(self.effects)
+        elif action == "fx_prev":
+            self.effect_idx = (self.effect_idx - 1) % len(self.effects)
+        elif action == "toggle_sensor2":
+            self.config.camera2_enabled = not self.config.camera2_enabled
+            self.notify(f"Capteur 2 {'ON' if self.config.camera2_enabled else 'OFF'}")
+        elif action == "save_config":
+            CONFIG_FILE.write_text(json.dumps(self.config.to_dict(), indent=2))
+            self.notify("config.json sauvegardé")
+
+    def draw_camera_view(self, frame: np.ndarray) -> None:
+        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
+        frame = self.apply_effect(frame)
+        surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
         canvas.blit(surf, (0, 0))
 
-        original_screen = self.screen
-        self.screen = canvas
-        self.draw_grid()
-        self.screen = original_screen
+        t = min(1.0, (time.time() - self.menu_anim_start) / self.menu_anim_duration) if self.menu_anim_start else 1.0
+        eased = self.ease_out_quad(t)
 
-        panel = pygame.Rect(PREVIEW_W, 0, PANEL_W, SCREEN_H)
-        pygame.draw.rect(canvas, (18, 18, 18), panel)
+        blurred = self.gaussian_blur_preview(frame)
+        blur_surf = pygame.surfarray.make_surface(blurred.swapaxes(0, 1))
+        blur_surf.set_alpha(90)
+        canvas.blit(blur_surf, (0, 0))
 
+        panel = pygame.Surface((PANEL_W, SCREEN_H), pygame.SRCALPHA)
+        panel.fill((18, 18, 18, int(220 * eased)))
         title = self.font.render(f"MENU: {self.current_menu().value}", True, (235, 235, 235))
-        canvas.blit(title, (PREVIEW_W + MARGIN, 16))
+        panel.blit(title, (MARGIN, 16))
+        for rect, title, _ in self.buttons():
+            local = rect.move(-PREVIEW_W, 0)
+            pygame.draw.rect(panel, (60, 60, 60), local, border_radius=8)
+            pygame.draw.rect(panel, (120, 120, 120), local, width=1, border_radius=8)
+            panel.blit(self.small.render(title, True, (240, 240, 240)), (local.x + 10, local.y + 12))
 
-        for rect, title, _action in self.buttons():
-            color = (55, 55, 55)
-            pygame.draw.rect(canvas, color, rect, border_radius=8)
-            pygame.draw.rect(canvas, (120, 120, 120), rect, width=2, border_radius=8)
-            label = self.small.render(title, True, (230, 230, 230))
-            canvas.blit(label, (rect.x + 12, rect.y + 13))
+        x_offset = int((1 - eased) * PANEL_W)
+        canvas.blit(panel, (PREVIEW_W + x_offset, 0))
 
-        # HUD top-left: RC CYBER + status CPU/SD
-        rc_txt = self.small.render("RC CYBER", True, (120, 250, 255))
-        hw_txt = self.small.render(self.read_system_status(), True, (230, 230, 230))
-        canvas.blit(rc_txt, (12, 12))
-        canvas.blit(hw_txt, (12, 34))
-
-        # EV slider on the right, pushed to the bottom area
-        ev = self.params[0]
-        slider_h = 170
-        slider_x = PREVIEW_W - 18
-        slider_top = SCREEN_H - slider_h - 36
-        slider_bottom = slider_top + slider_h
-        pygame.draw.line(canvas, (205, 230, 255), (slider_x, slider_top), (slider_x, slider_bottom), 4)
-        ratio = (ev.value - ev.min_val) / (ev.max_val - ev.min_val)
-        knob_y = int(slider_bottom - ratio * slider_h)
-        pygame.draw.circle(canvas, (220, 250, 255), (slider_x, knob_y), 9, 2)
-        ev_lbl = self.small.render(f"EV {ev.value:+.1f}", True, (230, 230, 230))
-        canvas.blit(ev_lbl, (slider_x - 28, slider_bottom + 8))
-
-        param = self.params[self.selected]
-        status = [
-            f"Param: {param.label} = {param.value:.2f}",
-            f"AE: {'ON' if self.auto_exposure else 'OFF'} / AWB: {self.awb_modes[self.awb_mode_idx][0]}",
-            f"Profile: {self.color_profile} / Effect: {EFFECTS[self.effect_idx]}",
-            f"Grid: {GRIDS[self.grid_idx]}",
-            f"Last: {self.last_capture}",
-            self.hardware_summary,
-        ]
-        y = SCREEN_H - 130
-        pygame.draw.rect(canvas, (0, 0, 0), (0, y, PREVIEW_W, 130))
-        for line in status:
-            txt = self.small.render(line, True, (240, 240, 240))
-            canvas.blit(txt, (12, y + 4))
-            y += 21
+        hud = self.small.render(f"Last: {self.last_capture}", True, (255, 255, 200))
+        canvas.blit(hud, (14, SCREEN_H - 28))
 
         if time.time() < self.message_until:
-            msg = self.font.render(self.message, True, (255, 220, 120))
-            canvas.blit(msg, (16, 14))
+            canvas.blit(self.font.render(self.message, True, (255, 220, 120)), (12, 10))
 
-        if UI_ROTATE_180:
-            final_surface = pygame.transform.rotate(canvas, 180)
-            self.screen.blit(final_surface, (0, 0))
-        else:
-            self.screen.blit(canvas, (0, 0))
+        if self.rename_modal:
+            modal = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            modal.fill((0, 0, 0, 150))
+            pygame.draw.rect(modal, (30, 30, 30, 240), (60, 70, SCREEN_W - 120, SCREEN_H - 140), border_radius=14)
+            modal.blit(self.font.render("Renommer la photo", True, (240, 240, 240)), (90, 94))
+            modal.blit(self.small.render(self.rename_text or "...", True, (255, 255, 180)), (90, 140))
+            ok = pygame.Rect(530, 360, 80, 42)
+            cancel = pygame.Rect(620, 360, 110, 42)
+            pygame.draw.rect(modal, (80, 130, 80), ok, border_radius=8)
+            pygame.draw.rect(modal, (130, 80, 80), cancel, border_radius=8)
+            modal.blit(self.small.render("OK", True, (255, 255, 255)), (560, 373))
+            modal.blit(self.small.render("Annuler", True, (255, 255, 255)), (644, 373))
+            canvas.blit(modal, (0, 0))
+            if self.keyboard_widget:
+                self.keyboard_widget.draw()
 
+        self.screen.blit(canvas, (0, 0))
         pygame.display.flip()
 
+    def draw_edit_view(self) -> None:
+        if self.edit_surface is None:
+            self.view = View.CAMERA
+            return
+        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
+        scaled = pygame.transform.smoothscale(self.edit_surface, (PREVIEW_W, SCREEN_H))
+        canvas.blit(scaled, (0, 0))
+
+        pygame.draw.rect(canvas, (255, 255, 0), self.crop_rect, width=2)
+        ratio_txt = f"Ratio {self.crop_ratios[self.crop_ratio_idx][0]}:{self.crop_ratios[self.crop_ratio_idx][1]}"
+        canvas.blit(self.small.render(ratio_txt, True, (255, 240, 160)), (14, 12))
+
+        panel = pygame.Rect(PREVIEW_W, 0, PANEL_W, SCREEN_H)
+        pygame.draw.rect(canvas, (20, 20, 20), panel)
+        y = 20
+        labels = ["brightness", "contrast", "saturation", "hue"]
+        for idx, lbl in enumerate(labels):
+            val = self.edit_sliders[lbl]
+            canvas.blit(self.small.render(f"{lbl}: {val:.2f}", True, (230, 230, 230)), (PREVIEW_W + 14, y))
+            pygame.draw.line(canvas, (120, 120, 120), (PREVIEW_W + 14, y + 24), (SCREEN_W - 16, y + 24), 2)
+            knob_x = int(PREVIEW_W + 14 + ((val + 1) / 2) * (PANEL_W - 40)) if lbl != "contrast" else int(PREVIEW_W + 14 + (val / 2) * (PANEL_W - 40))
+            pygame.draw.circle(canvas, (180, 240, 255), (knob_x, y + 24), 6)
+            y += 66
+
+        cmds = ["RATIO", "ROT90", "FLIP", "UNDO", "CROP", "SAVE", "BACK"]
+        for i, cmd in enumerate(cmds):
+            rect = pygame.Rect(PREVIEW_W + 14, 300 + i * 24, PANEL_W - 28, 22)
+            pygame.draw.rect(canvas, (65, 65, 65), rect, border_radius=6)
+            canvas.blit(self.small.render(cmd, True, (255, 255, 255)), (rect.x + 8, rect.y + 3))
+
+        self.screen.blit(canvas, (0, 0))
+        pygame.display.flip()
+
+    def handle_edit_click(self, pos: Tuple[int, int]) -> None:
+        if pos[0] < PREVIEW_W and self.crop_rect.collidepoint(pos):
+            self.crop_drag = True
+            return
+        x, y = pos
+        if x < PREVIEW_W:
+            return
+        cmd_index = (y - 300) // 24
+        if 0 <= cmd_index < 7:
+            cmd = ["ratio", "rot", "flip", "undo", "crop", "save", "back"][cmd_index]
+            if cmd == "ratio":
+                self.crop_ratio_idx = (self.crop_ratio_idx + 1) % len(self.crop_ratios)
+                w_ratio, h_ratio = self.crop_ratios[self.crop_ratio_idx]
+                self.crop_rect.height = int(self.crop_rect.width * h_ratio / w_ratio)
+            elif cmd == "rot" and self.edit_surface is not None:
+                self.push_undo()
+                self.edit_surface = pygame.transform.rotate(self.edit_surface, -90)
+            elif cmd == "flip" and self.edit_surface is not None:
+                self.push_undo()
+                self.edit_surface = pygame.transform.flip(self.edit_surface, True, False)
+            elif cmd == "undo" and len(self.edit_history) > 1:
+                self.edit_history.pop()
+                self.edit_surface = self.edit_history[-1].copy()
+            elif cmd == "crop" and self.edit_surface is not None:
+                self.push_undo()
+                src = pygame.transform.smoothscale(self.edit_surface, (PREVIEW_W, SCREEN_H))
+                cropped = src.subsurface(self.crop_rect).copy()
+                self.edit_surface = cropped
+            elif cmd == "save":
+                self.save_edited()
+            elif cmd == "back":
+                self.view = View.CAMERA
+
     def click(self, pos: Tuple[int, int]) -> None:
-        rects = self.gallery_button_rects() if self.gallery_mode else self.buttons()
-        for i, (rect, _title, action) in enumerate(rects):
+        if self.view == View.EDIT:
+            self.handle_edit_click(pos)
+            return
+
+        if self.rename_modal:
+            if pygame.Rect(530, 360, 80, 42).collidepoint(pos):
+                self.rename_last()
+                self.rename_modal = False
+                self.keyboard_widget = None
+            elif pygame.Rect(620, 360, 110, 42).collidepoint(pos):
+                self.rename_modal = False
+                self.keyboard_widget = None
+            return
+
+        for rect, _t, action in self.buttons():
             if rect.collidepoint(pos):
-                self.focus_idx = i
-                if self.gallery_mode:
-                    self.handle_gallery_action(action)
-                else:
-                    self.handle_action(action)
+                self.handle_action(action)
                 return
 
     def run(self) -> None:
@@ -550,58 +466,49 @@ class CameraApp:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         raise SystemExit
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        if self.view == View.EDIT:
+                            self.view = View.CAMERA
+                        elif self.rename_modal:
+                            self.rename_modal = False
+                        else:
                             raise SystemExit
-                        if event.key in (pygame.K_SPACE, pygame.K_RETURN):
-                            self.handle_action("capture")
-                        if event.key == pygame.K_UP:
-                            self.handle_action("param_up")
-                        if event.key == pygame.K_DOWN:
-                            self.handle_action("param_down")
-                        if event.key == pygame.K_LEFT:
-                            self.handle_action("menu_prev")
-                        if event.key == pygame.K_RIGHT:
-                            self.handle_action("menu_next")
-                        if event.key == pygame.K_a:
-                            self.handle_action("toggle_ae")
-                        if event.key == pygame.K_w:
-                            self.handle_action("next_awb")
-                        if event.key == pygame.K_p:
-                            self.handle_action("profile_next")
-                        if event.key == pygame.K_e:
-                            self.handle_action("effect_next")
-                        if event.key == pygame.K_g:
-                            self.handle_action("grid_next")
+                    if event.type == pygame.KEYDOWN and self.rename_modal:
+                        if event.key == pygame.K_BACKSPACE:
+                            self.rename_text = self.rename_text[:-1]
+                        elif event.key == pygame.K_RETURN:
+                            self.rename_last()
+                            self.rename_modal = False
+                        elif event.key == pygame.K_TAB:
+                            self.caps = not self.caps
+                        elif event.unicode:
+                            ch = event.unicode.upper() if self.caps else event.unicode
+                            self.rename_text += ch
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         self.click(event.pos)
+                    if event.type == pygame.MOUSEBUTTONUP:
+                        self.crop_drag = False
+                    if event.type == pygame.MOUSEMOTION and self.view == View.EDIT and self.crop_drag:
+                        self.crop_rect.center = event.pos
 
-                self.handle_encoder_input()
-
-                if self.gallery_mode and self.slideshow and self.gallery_files and time.time() >= self.next_slide_at:
-                    self.handle_gallery_action("gal_next")
-                    self.next_slide_at = time.time() + self.slide_every_s
-
-                frame = self.camera.capture_array()
-                self.draw(frame)
-                self.clock.tick(28)
+                if self.view == View.CAMERA:
+                    frame = self.camera.capture_array()
+                    self.draw_camera_view(frame)
+                else:
+                    self.draw_edit_view()
+                self.clock.tick(30)
         finally:
             self.camera.stop()
+            if self.cam2:
+                self.cam2.stop()
             pygame.quit()
-            if self.encoder_enabled:
-                GPIO.cleanup()
 
 
 def main() -> int:
-    if os.geteuid() != 0:
-        print("[INFO] Run from tty on Raspberry Pi for best DRM performance.")
     app = CameraApp()
     app.run()
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except KeyboardInterrupt:
-        raise SystemExit(0)
+    raise SystemExit(main())
