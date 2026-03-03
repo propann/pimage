@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
@@ -11,13 +10,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pygame
-import yaml
 
 from overlays import GridOverlay, HistogramOverlay
+from pimage.config import AppConfig, load_config
+from pimage.effects import apply_effect as apply_preview_effect
+from pimage.storage import build_capture_filename, get_storage_status
 from ui_hud import HudUI
 
 try:
@@ -66,49 +67,6 @@ class CameraParam:
 
     def dec(self) -> None:
         self.value = max(self.min_val, self.value - self.step)
-
-
-@dataclass
-class AppConfig:
-    photos_path: str = str(Path.home() / "photos")
-    screen_w: int = DEFAULT_SCREEN_W
-    screen_h: int = DEFAULT_SCREEN_H
-    panel_w: int = DEFAULT_PANEL_W
-    camera_index: int = 0
-    camera2_enabled: bool = False
-    default_grid: str = "thirds"
-    fan_pwm: int = 35
-
-    def to_dict(self) -> Dict[str, object]:
-        return {
-            "paths": {"photos": self.photos_path},
-            "screen": {"width": self.screen_w, "height": self.screen_h, "panel_width": self.panel_w},
-            "camera": {"index": self.camera_index, "sensor2_enabled": self.camera2_enabled},
-            "overlay": {"default_grid": self.default_grid, "histogram_interval_ms": 500},
-            "cooling": {"fan_pwm": self.fan_pwm, "curve": [[45, 25], [60, 55], [75, 90]]},
-        }
-
-
-def load_config(path: Path = CONFIG_FILE) -> AppConfig:
-    cfg = AppConfig()
-    legacy = Path("config.json")
-    if not path.exists() and legacy.exists():
-        raw = json.loads(legacy.read_text())
-    elif path.exists():
-        raw = yaml.safe_load(path.read_text()) or {}
-    else:
-        raw = {}
-    if raw:
-        cfg.photos_path = str(raw.get("paths", {}).get("photos", cfg.photos_path))
-        cfg.screen_w = int(raw.get("screen", {}).get("width", cfg.screen_w))
-        cfg.screen_h = int(raw.get("screen", {}).get("height", cfg.screen_h))
-        cfg.panel_w = int(raw.get("screen", {}).get("panel_width", cfg.panel_w))
-        cfg.camera_index = int(raw.get("camera", {}).get("index", cfg.camera_index))
-        cfg.camera2_enabled = bool(raw.get("camera", {}).get("sensor2_enabled", cfg.camera2_enabled))
-        cfg.default_grid = str(raw.get("overlay", {}).get("default_grid", cfg.default_grid))
-        cfg.fan_pwm = int(raw.get("cooling", {}).get("fan_pwm", cfg.fan_pwm))
-    path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=False, allow_unicode=True))
-    return cfg
 
 
 class CameraApp:
@@ -217,16 +175,7 @@ class CameraApp:
 
     def apply_effect(self, frame: np.ndarray) -> np.ndarray:
         fx = self.effects[self.effect_idx]
-        out = frame.astype(np.float32)
-        if fx == "noir":
-            g = out[:, :, 0] * 0.3 + out[:, :, 1] * 0.59 + out[:, :, 2] * 0.11
-            out[:, :, 0] = g
-            out[:, :, 1] = g
-            out[:, :, 2] = g
-        elif fx == "vintage":
-            out[:, :, 0] *= 1.08
-            out[:, :, 2] *= 0.82
-        return np.clip(out, 0, 255).astype(np.uint8)
+        return apply_preview_effect(frame, fx)
 
     def apply_controls(self) -> None:
         controls = {p.key: p.value for p in self.params}
@@ -254,8 +203,15 @@ class CameraApp:
         return out
 
     def capture(self) -> None:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out = self.photo_dir / f"img_{ts}.jpg"
+        status = get_storage_status(self.photo_dir)
+        if status.read_only:
+            self.notify("Stockage en lecture seule", 2.0)
+            return
+        if status.free_bytes < 20 * 1024 * 1024:
+            self.notify("Espace disque insuffisant", 2.0)
+            return
+
+        out = self.photo_dir / build_capture_filename(prefix="img", profile=self.effects[self.effect_idx])
         self.camera.capture_file(str(out))
         self.last_capture = out.name
         self.notify(f"Saved {out.name}", 2.0)
