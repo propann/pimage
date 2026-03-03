@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,10 +31,9 @@ except ImportError:  # pragma: no cover
     vkeyboard = None
 
 
-SCREEN_W = 800
-SCREEN_H = 480
-PANEL_W = 320
-PREVIEW_W = SCREEN_W - PANEL_W
+DEFAULT_SCREEN_W = 800
+DEFAULT_SCREEN_H = 480
+DEFAULT_PANEL_W = 320
 BUTTON_H = 44
 MARGIN = 10
 CONFIG_FILE = Path("config.yaml")
@@ -71,9 +71,9 @@ class CameraParam:
 @dataclass
 class AppConfig:
     photos_path: str = str(Path.home() / "photos")
-    screen_w: int = SCREEN_W
-    screen_h: int = SCREEN_H
-    panel_w: int = PANEL_W
+    screen_w: int = DEFAULT_SCREEN_W
+    screen_h: int = DEFAULT_SCREEN_H
+    panel_w: int = DEFAULT_PANEL_W
     camera_index: int = 0
     camera2_enabled: bool = False
     default_grid: str = "thirds"
@@ -117,11 +117,16 @@ class CameraApp:
             raise RuntimeError("Picamera2 manquant sur cette machine")
 
         self.config = load_config()
+        self.screen_w = int(self.config.screen_w)
+        self.screen_h = int(self.config.screen_h)
+        self.panel_w = int(self.config.panel_w)
+        self.preview_w = self.screen_w - self.panel_w
+
         self.photo_dir = Path(self.config.photos_path)
         self.photo_dir.mkdir(parents=True, exist_ok=True)
 
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        self.screen = pygame.display.set_mode((self.screen_w, self.screen_h))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("DejaVuSans", 22)
         self.small = pygame.font.SysFont("DejaVuSans", 17)
@@ -129,7 +134,7 @@ class CameraApp:
         self.camera = Picamera2(self.config.camera_index)
         self.cam2 = Picamera2(1) if self.config.camera2_enabled else None
         preview_cfg = self.camera.create_preview_configuration(
-            main={"size": (PREVIEW_W, SCREEN_H), "format": "RGB888"},
+            main={"size": (self.preview_w, self.screen_h), "format": "RGB888"},
             buffer_count=3,
         )
         self.camera.configure(preview_cfg)
@@ -164,6 +169,8 @@ class CameraApp:
         self.edit_history: List[pygame.Surface] = []
         self.crop_rect = pygame.Rect(80, 60, 260, 220)
         self.crop_drag = False
+        self.slider_drag = False
+        self.slider_drag_key: Optional[str] = None
         self.crop_ratio_idx = 0
         self.crop_ratios = [(1, 1), (4, 3), (16, 9)]
         self.edit_selected_slider = 0
@@ -173,7 +180,7 @@ class CameraApp:
         if self.config.default_grid in [s.name for s in self.grid_overlay.styles]:
             self.grid_overlay.index = [s.name for s in self.grid_overlay.styles].index(self.config.default_grid)
         self.histogram = HistogramOverlay(interval_s=0.5)
-        self.hud = HudUI(SCREEN_W, SCREEN_H)
+        self.hud = HudUI(self.screen_w, self.screen_h)
         self.left_menu_items = ["Capture", "Galerie", "Édition", "Config"]
         self.left_menu_idx = 0
         self.aperture = 2.8
@@ -238,8 +245,8 @@ class CameraApp:
         return [("Hardware: capteur2", "toggle_sensor2"), ("Sauver config", "save_config"), ("NEXT", "menu_next"), ("PREV", "menu_prev")]
 
     def buttons(self) -> List[Tuple[pygame.Rect, str, str]]:
-        x, y = PREVIEW_W + MARGIN, 60
-        w = PANEL_W - 2 * MARGIN
+        x, y = self.preview_w + MARGIN, 60
+        w = self.panel_w - 2 * MARGIN
         out = []
         for title, action in self.menu_buttons():
             out.append((pygame.Rect(x, y, w, BUTTON_H), title, action))
@@ -297,16 +304,43 @@ class CameraApp:
     def on_virtual_key(self, text: str) -> None:
         self.rename_text = text
 
+
+    _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
+
+    def sanitize_filename(self, name: str, max_len: int = 64) -> str:
+        name = name.strip().replace(os.sep, " ")
+        if os.altsep:
+            name = name.replace(os.altsep, " ")
+        name = self._FILENAME_SAFE.sub("", name)
+        name = re.sub(r"\s+", " ", name).strip()
+        return name[:max_len]
+
+    def _unique_path(self, base: Path) -> Path:
+        if not base.exists():
+            return base
+        for i in range(1, 1000):
+            candidate = base.with_name(f"{base.stem}-{i}{base.suffix}")
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError("Cannot find unique filename")
+
     def rename_last(self) -> None:
         if self.last_capture == "-":
             return
         src = self.photo_dir / self.last_capture
-        if not src.exists() or not self.rename_text.strip():
+        clean = self.sanitize_filename(self.rename_text)
+        if not src.exists() or not clean:
             return
-        dst = self.photo_dir / f"{self.rename_text.strip()}.jpg"
-        src.rename(dst)
-        self.last_capture = dst.name
-        self.notify(f"Renommé: {dst.name}")
+        try:
+            dst = self._unique_path(self.photo_dir / f"{clean}.jpg")
+            dst_resolved = dst.resolve()
+            if self.photo_dir.resolve() not in dst_resolved.parents:
+                raise ValueError("Invalid destination path")
+            src.rename(dst)
+            self.last_capture = dst.name
+            self.notify(f"Renommé: {dst.name}")
+        except Exception as exc:
+            self.notify(f"Renommage impossible: {exc}", timeout=2.5)
 
     def save_edited(self) -> None:
         if self.edit_surface is None:
@@ -353,12 +387,12 @@ class CameraApp:
             self.notify("config.yaml sauvegardé")
 
     def draw_camera_view(self, frame: np.ndarray) -> None:
-        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
+        canvas = pygame.Surface((self.screen_w, self.screen_h))
         frame = self.apply_effect(frame)
         surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
         canvas.blit(surf, (0, 0))
 
-        preview_rect = pygame.Rect(0, 0, SCREEN_W, SCREEN_H)
+        preview_rect = pygame.Rect(0, 0, self.screen_w, self.screen_h)
         self.grid_overlay.draw(canvas, preview_rect)
         self.histogram.update(frame)
 
@@ -372,11 +406,11 @@ class CameraApp:
         ])
         self.hud.draw(canvas, self.left_menu_items, self.left_menu_idx)
 
-        right_x = self.hud.right_panel.x(SCREEN_W)
-        hist_rect = pygame.Rect(right_x + 14, SCREEN_H - 120, self.hud.right_panel.width - 28, 98)
+        right_x = self.hud.right_panel.x(self.screen_w)
+        hist_rect = pygame.Rect(right_x + 14, self.screen_h - 120, self.hud.right_panel.width - 28, 98)
         self.histogram.draw(canvas, hist_rect)
 
-        grid_btn = pygame.Rect(16, SCREEN_H - 52, 130, 36)
+        grid_btn = pygame.Rect(16, self.screen_h - 52, 130, 36)
         pygame.draw.rect(canvas, (20, 20, 30, 185), grid_btn, border_radius=9)
         pygame.draw.rect(canvas, (160, 160, 175), grid_btn, 1, border_radius=9)
         canvas.blit(self.small.render(f"Grid: {self.grid_overlay.current}", True, (240, 240, 250)), (grid_btn.x + 9, grid_btn.y + 10))
@@ -385,9 +419,9 @@ class CameraApp:
             canvas.blit(self.font.render(self.message, True, (255, 220, 120)), (12, 10))
 
         if self.rename_modal:
-            modal = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            modal = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
             modal.fill((0, 0, 0, 150))
-            pygame.draw.rect(modal, (30, 30, 30, 240), (60, 70, SCREEN_W - 120, SCREEN_H - 140), border_radius=14)
+            pygame.draw.rect(modal, (30, 30, 30, 240), (60, 70, self.screen_w - 120, self.screen_h - 140), border_radius=14)
             modal.blit(self.font.render("Renommer la photo", True, (240, 240, 240)), (90, 94))
             modal.blit(self.small.render(self.rename_text or "...", True, (255, 255, 180)), (90, 140))
             ok = pygame.Rect(530, 360, 80, 42)
@@ -407,29 +441,35 @@ class CameraApp:
         if self.edit_surface is None:
             self.view = View.CAMERA
             return
-        canvas = pygame.Surface((SCREEN_W, SCREEN_H))
-        scaled = pygame.transform.smoothscale(self.edit_surface, (PREVIEW_W, SCREEN_H))
+        canvas = pygame.Surface((self.screen_w, self.screen_h))
+        scaled = pygame.transform.smoothscale(self.edit_surface, (self.preview_w, self.screen_h))
         canvas.blit(scaled, (0, 0))
 
         pygame.draw.rect(canvas, (255, 255, 0), self.crop_rect, width=2)
         ratio_txt = f"Ratio {self.crop_ratios[self.crop_ratio_idx][0]}:{self.crop_ratios[self.crop_ratio_idx][1]}"
         canvas.blit(self.small.render(ratio_txt, True, (255, 240, 160)), (14, 12))
 
-        panel = pygame.Rect(PREVIEW_W, 0, PANEL_W, SCREEN_H)
+        panel = pygame.Rect(self.preview_w, 0, self.panel_w, self.screen_h)
         pygame.draw.rect(canvas, (20, 20, 20), panel)
         y = 20
         labels = ["brightness", "contrast", "saturation", "hue"]
         for idx, lbl in enumerate(labels):
             val = self.edit_sliders[lbl]
-            canvas.blit(self.small.render(f"{lbl}: {val:.2f}", True, (230, 230, 230)), (PREVIEW_W + 14, y))
-            pygame.draw.line(canvas, (120, 120, 120), (PREVIEW_W + 14, y + 24), (SCREEN_W - 16, y + 24), 2)
-            knob_x = int(PREVIEW_W + 14 + ((val + 1) / 2) * (PANEL_W - 40)) if lbl != "contrast" else int(PREVIEW_W + 14 + (val / 2) * (PANEL_W - 40))
+            canvas.blit(self.small.render(f"{lbl}: {val:.2f}", True, (230, 230, 230)), (self.preview_w + 14, y))
+            x1 = self.preview_w + 14
+            x2 = self.screen_w - 16
+            pygame.draw.line(canvas, (120, 120, 120), (x1, y + 24), (x2, y + 24), 2)
+            if lbl == "contrast":
+                p = max(0.0, min(1.0, val / 2.0))
+            else:
+                p = max(0.0, min(1.0, (val + 1.0) / 2.0))
+            knob_x = int(x1 + p * (x2 - x1))
             pygame.draw.circle(canvas, (180, 240, 255), (knob_x, y + 24), 6)
             y += 66
 
         cmds = ["RATIO", "ROT90", "FLIP", "UNDO", "CROP", "SAVE", "BACK"]
         for i, cmd in enumerate(cmds):
-            rect = pygame.Rect(PREVIEW_W + 14, 300 + i * 24, PANEL_W - 28, 22)
+            rect = pygame.Rect(self.preview_w + 14, 300 + i * 24, self.panel_w - 28, 22)
             pygame.draw.rect(canvas, (65, 65, 65), rect, border_radius=6)
             canvas.blit(self.small.render(cmd, True, (255, 255, 255)), (rect.x + 8, rect.y + 3))
 
@@ -437,11 +477,22 @@ class CameraApp:
         pygame.display.flip()
 
     def handle_edit_click(self, pos: Tuple[int, int]) -> None:
-        if pos[0] < PREVIEW_W and self.crop_rect.collidepoint(pos):
+        if pos[0] < self.preview_w and self.crop_rect.collidepoint(pos):
             self.crop_drag = True
             return
         x, y = pos
-        if x < PREVIEW_W:
+        if x >= self.preview_w:
+            slider_keys = ["brightness", "contrast", "saturation", "hue"]
+            base_y = 20
+            step_y = 66
+            for idx, key in enumerate(slider_keys):
+                sy = base_y + idx * step_y + 24
+                if abs(y - sy) <= 18:
+                    self.slider_drag = True
+                    self.slider_drag_key = key
+                    self._update_slider_from_x(x)
+                    return
+        if x < self.preview_w:
             return
         cmd_index = (y - 300) // 24
         if 0 <= cmd_index < 7:
@@ -461,13 +512,28 @@ class CameraApp:
                 self.edit_surface = self.edit_history[-1].copy()
             elif cmd == "crop" and self.edit_surface is not None:
                 self.push_undo()
-                src = pygame.transform.smoothscale(self.edit_surface, (PREVIEW_W, SCREEN_H))
+                src = pygame.transform.smoothscale(self.edit_surface, (self.preview_w, self.screen_h))
                 cropped = src.subsurface(self.crop_rect).copy()
                 self.edit_surface = cropped
             elif cmd == "save":
                 self.save_edited()
             elif cmd == "back":
                 self.view = View.CAMERA
+
+    def _update_slider_from_x(self, x: int) -> None:
+        if not self.slider_drag_key:
+            return
+        x1 = self.preview_w + 14
+        x2 = self.screen_w - 16
+        if x2 <= x1:
+            return
+        p = max(0.0, min(1.0, (x - x1) / (x2 - x1)))
+        key = self.slider_drag_key
+        if key == "contrast":
+            self.edit_sliders[key] = 2.0 * p
+        else:
+            self.edit_sliders[key] = 2.0 * p - 1.0
+        self.edit_apply_sliders()
 
     def click(self, pos: Tuple[int, int]) -> None:
         if self.view == View.EDIT:
@@ -484,7 +550,7 @@ class CameraApp:
                 self.keyboard_widget = None
             return
 
-        if pygame.Rect(16, SCREEN_H - 52, 130, 36).collidepoint(pos):
+        if pygame.Rect(16, self.screen_h - 52, 130, 36).collidepoint(pos):
             self.grid_overlay.cycle()
             self.config.default_grid = self.grid_overlay.current
             return
@@ -552,8 +618,12 @@ class CameraApp:
                         self.click(event.pos)
                     if event.type == pygame.MOUSEBUTTONUP:
                         self.crop_drag = False
+                        self.slider_drag = False
+                        self.slider_drag_key = None
                     if event.type == pygame.MOUSEMOTION and self.view == View.EDIT and self.crop_drag:
                         self.crop_rect.center = event.pos
+                    if event.type == pygame.MOUSEMOTION and self.view == View.EDIT and self.slider_drag:
+                        self._update_slider_from_x(event.pos[0])
 
                 if self.view == View.CAMERA:
                     frame = self.camera.capture_array()
