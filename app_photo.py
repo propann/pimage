@@ -111,7 +111,10 @@ class CameraApp:
         if Picamera2 is None: raise RuntimeError("Picamera2 missing")
         PHOTO_DIR.mkdir(parents=True, exist_ok=True)
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
+        display_flags = pygame.FULLSCREEN | pygame.DOUBLEBUF
+        if hasattr(pygame, "HWSURFACE"):
+            display_flags |= pygame.HWSURFACE
+        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), display_flags)
         pygame.mouse.set_visible(False)
         self.screen_w, self.screen_h = self.screen.get_size()
         # Base control width (actual button widths are computed dynamically).
@@ -766,7 +769,8 @@ class CameraApp:
         if self.display_rotation:
             frame_surface = pygame.transform.rotate(frame_surface, self.display_rotation)
         if frame_surface.get_size() != (self.screen_w, self.screen_h):
-            frame_surface = pygame.transform.smoothscale(frame_surface, (self.screen_w, self.screen_h))
+            # Live preview: use deterministic scaling to reduce visual shimmer/tearing sensation.
+            frame_surface = pygame.transform.scale(frame_surface, (self.screen_w, self.screen_h))
         px = 0
         self.screen.blit(frame_surface, (px, 0))
         pygame.draw.rect(self.screen, colors["frame_a"], (4, 4, self.screen_w - 8, self.screen_h - 8), width=1, border_radius=10)
@@ -1233,7 +1237,7 @@ class CameraApp:
                         logger.debug("CPU temp read failed: %s", exc)
                     self.last_cpu_check = time.time()
                 try:
-                    frame = self.camera.capture_array()
+                    frame = self.camera.capture_array("main")
                 except Exception as exc:
                     self.capture_failures += 1
                     logger.error("Frame capture failed (%d): %s", self.capture_failures, exc)
