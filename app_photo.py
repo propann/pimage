@@ -14,6 +14,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pygame
+import yaml
+
+from overlays import GridOverlay, HistogramOverlay
+from ui_hud import HudUI
 
 try:
     from picamera2 import Picamera2
@@ -32,7 +36,7 @@ PANEL_W = 320
 PREVIEW_W = SCREEN_W - PANEL_W
 BUTTON_H = 44
 MARGIN = 10
-CONFIG_FILE = Path("config.json")
+CONFIG_FILE = Path("config.yaml")
 
 
 class Menu(str, Enum):
@@ -72,26 +76,38 @@ class AppConfig:
     panel_w: int = PANEL_W
     camera_index: int = 0
     camera2_enabled: bool = False
+    default_grid: str = "thirds"
+    fan_pwm: int = 35
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "paths": {"photos": self.photos_path},
             "screen": {"width": self.screen_w, "height": self.screen_h, "panel_width": self.panel_w},
             "camera": {"index": self.camera_index, "sensor2_enabled": self.camera2_enabled},
+            "overlay": {"default_grid": self.default_grid, "histogram_interval_ms": 500},
+            "cooling": {"fan_pwm": self.fan_pwm, "curve": [[45, 25], [60, 55], [75, 90]]},
         }
 
 
 def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     cfg = AppConfig()
-    if path.exists():
-        raw = json.loads(path.read_text())
+    legacy = Path("config.json")
+    if not path.exists() and legacy.exists():
+        raw = json.loads(legacy.read_text())
+    elif path.exists():
+        raw = yaml.safe_load(path.read_text()) or {}
+    else:
+        raw = {}
+    if raw:
         cfg.photos_path = str(raw.get("paths", {}).get("photos", cfg.photos_path))
         cfg.screen_w = int(raw.get("screen", {}).get("width", cfg.screen_w))
         cfg.screen_h = int(raw.get("screen", {}).get("height", cfg.screen_h))
         cfg.panel_w = int(raw.get("screen", {}).get("panel_width", cfg.panel_w))
         cfg.camera_index = int(raw.get("camera", {}).get("index", cfg.camera_index))
         cfg.camera2_enabled = bool(raw.get("camera", {}).get("sensor2_enabled", cfg.camera2_enabled))
-    path.write_text(json.dumps(cfg.to_dict(), indent=2))
+        cfg.default_grid = str(raw.get("overlay", {}).get("default_grid", cfg.default_grid))
+        cfg.fan_pwm = int(raw.get("cooling", {}).get("fan_pwm", cfg.fan_pwm))
+    path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=False, allow_unicode=True))
     return cfg
 
 
@@ -152,6 +168,20 @@ class CameraApp:
         self.crop_ratios = [(1, 1), (4, 3), (16, 9)]
         self.edit_selected_slider = 0
         self.edit_sliders: Dict[str, float] = {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0, "hue": 0.0}
+
+        self.grid_overlay = GridOverlay()
+        if self.config.default_grid in [s.name for s in self.grid_overlay.styles]:
+            self.grid_overlay.index = [s.name for s in self.grid_overlay.styles].index(self.config.default_grid)
+        self.histogram = HistogramOverlay(interval_s=0.5)
+        self.hud = HudUI(SCREEN_W, SCREEN_H)
+        self.left_menu_items = ["Capture", "Galerie", "Édition", "Config"]
+        self.left_menu_idx = 0
+        self.aperture = 2.8
+        self.shutter = 125
+        self.iso = 100
+        self.ev = 0.0
+        self.kelvin = 5600
+        self.pi_temp_c = 47.5
 
         self.apply_controls()
 
@@ -319,8 +349,8 @@ class CameraApp:
             self.config.camera2_enabled = not self.config.camera2_enabled
             self.notify(f"Capteur 2 {'ON' if self.config.camera2_enabled else 'OFF'}")
         elif action == "save_config":
-            CONFIG_FILE.write_text(json.dumps(self.config.to_dict(), indent=2))
-            self.notify("config.json sauvegardé")
+            CONFIG_FILE.write_text(yaml.safe_dump(self.config.to_dict(), sort_keys=False, allow_unicode=True))
+            self.notify("config.yaml sauvegardé")
 
     def draw_camera_view(self, frame: np.ndarray) -> None:
         canvas = pygame.Surface((SCREEN_W, SCREEN_H))
@@ -328,29 +358,28 @@ class CameraApp:
         surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
         canvas.blit(surf, (0, 0))
 
-        t = min(1.0, (time.time() - self.menu_anim_start) / self.menu_anim_duration) if self.menu_anim_start else 1.0
-        eased = self.ease_out_quad(t)
+        preview_rect = pygame.Rect(0, 0, SCREEN_W, SCREEN_H)
+        self.grid_overlay.draw(canvas, preview_rect)
+        self.histogram.update(frame)
 
-        blurred = self.gaussian_blur_preview(frame)
-        blur_surf = pygame.surfarray.make_surface(blurred.swapaxes(0, 1))
-        blur_surf.set_alpha(90)
-        canvas.blit(blur_surf, (0, 0))
+        cards = self.hud.build_cards([
+            ("aperture", "Ouverture", f"f/{self.aperture:.1f}"),
+            ("shutter", "Vitesse", f"1/{int(self.shutter)}"),
+            ("iso", "ISO", str(int(self.iso))),
+            ("ev", "EV", f"{self.ev:+.1f}"),
+            ("kelvin", "Kelvin", f"{int(self.kelvin)}K"),
+            ("fan", "Pi / Ventilo", f"{self.pi_temp_c:.1f}°C · {int(self.config.fan_pwm)}%"),
+        ])
+        self.hud.draw(canvas, self.left_menu_items, self.left_menu_idx)
 
-        panel = pygame.Surface((PANEL_W, SCREEN_H), pygame.SRCALPHA)
-        panel.fill((18, 18, 18, int(220 * eased)))
-        title = self.font.render(f"MENU: {self.current_menu().value}", True, (235, 235, 235))
-        panel.blit(title, (MARGIN, 16))
-        for rect, title, _ in self.buttons():
-            local = rect.move(-PREVIEW_W, 0)
-            pygame.draw.rect(panel, (60, 60, 60), local, border_radius=8)
-            pygame.draw.rect(panel, (120, 120, 120), local, width=1, border_radius=8)
-            panel.blit(self.small.render(title, True, (240, 240, 240)), (local.x + 10, local.y + 12))
+        right_x = self.hud.right_panel.x(SCREEN_W)
+        hist_rect = pygame.Rect(right_x + 14, SCREEN_H - 120, self.hud.right_panel.width - 28, 98)
+        self.histogram.draw(canvas, hist_rect)
 
-        x_offset = int((1 - eased) * PANEL_W)
-        canvas.blit(panel, (PREVIEW_W + x_offset, 0))
-
-        hud = self.small.render(f"Last: {self.last_capture}", True, (255, 255, 200))
-        canvas.blit(hud, (14, SCREEN_H - 28))
+        grid_btn = pygame.Rect(16, SCREEN_H - 52, 130, 36)
+        pygame.draw.rect(canvas, (20, 20, 30, 185), grid_btn, border_radius=9)
+        pygame.draw.rect(canvas, (160, 160, 175), grid_btn, 1, border_radius=9)
+        canvas.blit(self.small.render(f"Grid: {self.grid_overlay.current}", True, (240, 240, 250)), (grid_btn.x + 9, grid_btn.y + 10))
 
         if time.time() < self.message_until:
             canvas.blit(self.font.render(self.message, True, (255, 220, 120)), (12, 10))
@@ -365,13 +394,13 @@ class CameraApp:
             cancel = pygame.Rect(620, 360, 110, 42)
             pygame.draw.rect(modal, (80, 130, 80), ok, border_radius=8)
             pygame.draw.rect(modal, (130, 80, 80), cancel, border_radius=8)
-            modal.blit(self.small.render("OK", True, (255, 255, 255)), (560, 373))
-            modal.blit(self.small.render("Annuler", True, (255, 255, 255)), (644, 373))
-            canvas.blit(modal, (0, 0))
-            if self.keyboard_widget:
-                self.keyboard_widget.draw()
+            modal.blit(self.small.render("OK", True, (255, 255, 255)), (ok.x + 28, ok.y + 12))
+            modal.blit(self.small.render("ANNULER", True, (255, 255, 255)), (cancel.x + 20, cancel.y + 12))
+            self.screen.blit(canvas, (0, 0))
+            self.screen.blit(modal, (0, 0))
+        else:
+            self.screen.blit(canvas, (0, 0))
 
-        self.screen.blit(canvas, (0, 0))
         pygame.display.flip()
 
     def draw_edit_view(self) -> None:
@@ -455,10 +484,45 @@ class CameraApp:
                 self.keyboard_widget = None
             return
 
-        for rect, _t, action in self.buttons():
-            if rect.collidepoint(pos):
-                self.handle_action(action)
-                return
+        if pygame.Rect(16, SCREEN_H - 52, 130, 36).collidepoint(pos):
+            self.grid_overlay.cycle()
+            self.config.default_grid = self.grid_overlay.current
+            return
+
+        action, index = self.hud.handle_click(pos, len(self.left_menu_items))
+        if action == "menu":
+            self.left_menu_idx = index
+            self.notify(f"Menu {self.left_menu_items[index]}")
+            return
+        if action.startswith("card:"):
+            key = action.split(":", 1)[1]
+            if key == "aperture":
+                self.hud.open_popup("Ouverture", self.aperture, 1.8, 16.0)
+            elif key == "shutter":
+                self.hud.open_popup("Vitesse", float(self.shutter), 30.0, 1000.0)
+            elif key == "iso":
+                self.hud.open_popup("ISO", float(self.iso), 50.0, 3200.0)
+            elif key == "ev":
+                self.hud.open_popup("EV", self.ev, -3.0, 3.0)
+            elif key == "kelvin":
+                self.hud.open_popup("Kelvin", float(self.kelvin), 2500.0, 8500.0)
+            elif key == "fan":
+                self.hud.open_popup("Ventilateur PWM", float(self.config.fan_pwm), 0.0, 100.0)
+            return
+        if action == "popup_adjust":
+            if self.hud.popup_key == "Ouverture":
+                self.aperture = self.hud.popup_value
+            elif self.hud.popup_key == "Vitesse":
+                self.shutter = max(1, int(self.hud.popup_value))
+            elif self.hud.popup_key == "ISO":
+                self.iso = max(50, int(self.hud.popup_value))
+            elif self.hud.popup_key == "EV":
+                self.ev = self.hud.popup_value
+            elif self.hud.popup_key == "Kelvin":
+                self.kelvin = int(self.hud.popup_value)
+            elif self.hud.popup_key == "Ventilateur PWM":
+                self.config.fan_pwm = int(self.hud.popup_value)
+            return
 
     def run(self) -> None:
         try:

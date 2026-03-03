@@ -160,4 +160,11 @@ python3 app_photo.py
 - Menus animés en slide-in/fade (0.4s, easing `easeOutQuad`) avec blur léger du preview derrière le panneau.
 - Popup modale de renommage avec overlay semi-transparent + clavier tactile (`pygame-vkeyboard` si disponible, fallback clavier physique).
 - Nouvelle vue **Edit** post-capture: crop draggable (ratios 1:1 / 4:3 / 16:9), réglages brightness/contrast/saturation/hue, rotate/flip, undo (stack max 5), export JPG.
-- `config.json` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2*.
+- `config.yaml` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2*.
+
+## HUD v2 « Pro Overlay Mode »
+
+- Interface recentrée sur le preview plein écran avec overlays.
+- Nouveau module `overlays.py` pour les grilles Oberkampf (tiers, golden+spirale, diagonales, 6x6, crop guides) et histogramme live RGB (~500ms).
+- Nouveau module `ui_hud.py` pour cartes encadrées cliquables + popup slider et panneaux latéraux animés (easeOut).
+- Configuration migrée vers `config.yaml` (`overlay.default_grid`, `cooling.fan_pwm`, courbe ventilateur, toggle capteur2).

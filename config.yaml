@@ -1,0 +1,18 @@
+paths:
+  photos: /home/pi/photos
+screen:
+  width: 800
+  height: 480
+  panel_width: 320
+camera:
+  index: 0
+  sensor2_enabled: false
+overlay:
+  default_grid: thirds
+  histogram_interval_ms: 500
+cooling:
+  fan_pwm: 35
+  curve:
+    - [45, 25]
+    - [60, 55]
+    - [75, 90]
