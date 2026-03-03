@@ -11,12 +11,12 @@ Mini application photo orientée Raspberry Pi 4 / CM4 + écran tactile DSI.
 
 Le but est d'avoir une base solide pour un boîtier custom (CM4 + capteur CSI + écran 800x480).
 
-## Fonctionnalités actuelles
+## Fonctionnalités actuelles (vérifiées dans le code)
 
 ### 1) Capture + interface
-- Preview live plein écran via **Picamera2**.
-- UI tactile Pygame avec gros boutons adaptés à un écran DSI.
-- Capture photo JPG dans `~/photos`.
+- Preview live via **Picamera2** + rendu Pygame.
+- UI tactile orientée écran 800x480.
+- Capture photo JPG dans le dossier défini par `config.yaml` (`paths.photos`).
 
 ### 2) Menus de configuration
 L'interface est organisée en **menus**:
@@ -31,58 +31,43 @@ Cela permet d'utiliser la caméra comme un appareil avec modes dédiés plutôt 
 ### 3) Contrôle caméra
 Réglages disponibles:
 - Exposure Value
-- Analogue Gain
 - Brightness
 - Contrast
 - Saturation
-- Sharpness
-- ExposureTime (manuel si AE OFF)
-- AE ON/OFF
-- AWB presets (auto/tungsten/fluo/indoor/daylight/cloudy)
 
-### 4) Profils couleur
-Profils intégrés:
-- `natural`
-- `vivid`
-- `cinema`
-- `mono`
-- `retro`
+> Note: la version actuelle applique ces contrôles via `set_controls`.
 
-Chaque profil applique une signature colorimétrique cohérente.
-
-### 5) Effets créatifs live
+### 4) Effets créatifs live
 Effets de preview:
 - `none`
 - `noir`
 - `vintage`
-- `cyber`
-- `thermal`
 
 > Note: les effets sont appliqués sur le flux de preview, pas comme pipeline ISP officiel.
 
-### 6) Grilles d'aide au cadrage
-Sélecteur de grilles directement dans les menus `Capture`, `Effect` et `System`:
-- `off`
-- `thirds` (règle des tiers)
-- `quarters` (4 lignes d'aide principales)
-- `crosshair`
-- `diagonal-x`
-- `triangles`
-- `golden-phi`
+### 5) Grilles d'aide au cadrage
+Sélecteur de grilles en overlay:
+- `thirds`
+- `golden`
+- `diagonals`
 - `dense-6x6`
+- `crop-guides`
 
-### 7) Profils utilisateur persistants
-- Sauvegarde/chargement de slots `A/B/C`
-- Fichier: `~/.pimage_profiles.json`
+### 6) HUD et popup de réglage
+- Panneau gauche (navigation) + cartes HUD à droite.
+- Popup slider pour ajuster ouverture/vitesse/ISO/EV/Kelvin/ventilation (valeurs UI).
 
-Pratique pour basculer entre configurations de prises de vues (jour, nuit, portrait, style artistique, etc.).
+### 7) Édition post-capture
+- Vue `Edit` avec:
+  - crop draggable,
+  - ratios `1:1`, `4:3`, `16:9`,
+  - rotate, flip, undo,
+  - sliders brightness/contrast/saturation/hue,
+  - export JPG.
 
-### 8) Analyse matérielle runtime
-Au lancement, l'app récupère un résumé matériel depuis Picamera2:
-- modèle capteur (si exposé)
-- nombre de contrôles caméra disponibles
-
-Ce résumé est affiché en overlay pour aider le tuning matériel.
+### 8) Configuration persistante
+- `config.yaml` est lu/écrit automatiquement.
+- Migration legacy `config.json` supportée au chargement.
 
 ---
 
@@ -160,11 +145,23 @@ python3 app_photo.py
 - Menus animés en slide-in/fade (0.4s, easing `easeOutQuad`) avec blur léger du preview derrière le panneau.
 - Popup modale de renommage avec overlay semi-transparent + clavier tactile (`pygame-vkeyboard` si disponible, fallback clavier physique).
 - Nouvelle vue **Edit** post-capture: crop draggable (ratios 1:1 / 4:3 / 16:9), réglages brightness/contrast/saturation/hue, rotate/flip, undo (stack max 5), export JPG.
-- `config.yaml` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2*.
+- `config.yaml` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2* et la sauvegarde de config.
 
 ## HUD v2 « Pro Overlay Mode »
 
 - Interface recentrée sur le preview plein écran avec overlays.
-- Nouveau module `overlays.py` pour les grilles Oberkampf (tiers, golden+spirale, diagonales, 6x6, crop guides) et histogramme live RGB (~500ms).
+- Nouveau module `overlays.py` pour les grilles (tiers, golden+spirale, diagonales, 6x6, crop guides) et histogramme live RGB (~500ms).
 - Nouveau module `ui_hud.py` pour cartes encadrées cliquables + popup slider et panneaux latéraux animés (easeOut).
 - Configuration migrée vers `config.yaml` (`overlay.default_grid`, `cooling.fan_pwm`, courbe ventilateur, toggle capteur2).
+
+---
+
+## Vérification rapide du dépôt
+
+Contrôles exécutés pour cette mise à jour:
+
+```bash
+python3 -m py_compile app_photo.py overlays.py ui_hud.py
+```
+
+Résultat: compilation Python OK (aucune erreur syntaxique).

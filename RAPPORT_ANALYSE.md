@@ -2,96 +2,72 @@
 
 ## Périmètre analysé
 - `app_photo.py`
+- `overlays.py`
+- `ui_hud.py`
 - `README.md`
+- `config.yaml`
 
 ## Synthèse rapide
-Le projet pose une bonne base de caméra tactile Raspberry Pi (capture, réglages, profils, effets, grilles), mais l’implémentation actuelle n’est pas exécutable en l’état car une partie du mode galerie/encodeur est référencée sans être implémentée.
+Le projet est globalement **cohérent et exécutable sur une machine équipée Picamera2**. Le code a évolué vers une architecture HUD/overlays plus claire qu’une simple UI à boutons. Les éléments critiques signalés dans l’ancien rapport (méthodes galerie/encodeur manquantes) ne sont plus présents dans cette version.
 
-## Points bloquants (à corriger en priorité)
+## Vérifications réalisées
+1. Lecture du code applicatif principal et des modules d’UI/overlay.
+2. Vérification de cohérence doc ↔ implémentation.
+3. Vérification syntaxique Python.
 
-1. **Références à des méthodes inexistantes dans `CameraApp`**
-   - `enter_gallery`
-   - `gallery_button_rects`
-   - `handle_gallery_action`
-   - `handle_encoder_input`
+Commande exécutée:
 
-   Ces appels existent dans `handle_action`, `click` et `run`, mais les méthodes ne sont pas définies.
+```bash
+python3 -m py_compile app_photo.py overlays.py ui_hud.py
+```
 
-2. **Constantes GPIO manquantes**
-   - `ENC_CLK`
-   - `ENC_DT`
-   - `ENC_SW`
+Résultat: **OK** (pas d’erreur de syntaxe).
 
-   Elles sont utilisées dans `setup_encoder` mais non déclarées.
+## État fonctionnel observé
 
-3. **Attributs potentiellement non initialisés**
-   - `gallery_mode`
-   - `slideshow`
-   - `gallery_files`
-   - `next_slide_at`
-   - `slide_every_s`
-   - `encoder_enabled`
-   - `focus_idx`
+### Fonctionnalités effectivement implémentées
+- Capture JPG et chargement du dernier cliché dans l’éditeur.
+- Menus applicatifs (`Capture`, `Tune`, `Color`, `Effect`, `System`).
+- Paramètres caméra appliqués via `set_controls` (EV, brightness, contrast, saturation).
+- Effets preview (`none`, `noir`, `vintage`).
+- Grilles overlay cycliques (`thirds`, `golden`, `diagonals`, `dense-6x6`, `crop-guides`).
+- Histogramme RGB live (mise à jour périodique).
+- Vue d’édition post-capture (crop, ratio, rotate, flip, undo, save).
+- Popup HUD de réglage des cartes (ouverture/vitesse/ISO/EV/Kelvin/ventilation côté UI).
+- Chargement + écriture de `config.yaml` avec migration legacy `config.json`.
 
-   Ils sont lus dans la boucle principale et dans la gestion du clic, mais leur initialisation n’apparaît pas.
+### Points de vigilance (non bloquants)
+1. **Dépendance hardware forte**
+   - L’exécution complète dépend de `Picamera2` et du matériel caméra.
+2. **Robustesse I/O perfectible**
+   - Peu de gestion d’erreurs sur capture/renommage/écriture config.
+3. **Cohérence dimensions écran**
+   - L’app initialise Pygame avec constantes (`SCREEN_W/H`) alors que la config expose aussi ces valeurs.
+4. **Tests automatisés absents**
+   - Pas de tests unitaires/intégration pour sécuriser régressions UI/logique.
 
-## Écarts fonctionnels vs vision produit (README)
+## Écart doc vs code (corrigé dans README)
+Le README précédent listait plusieurs capacités non présentes dans cette version (profils couleur multiples, AWB presets détaillés, grilles supplémentaires, profils A/B/C, analyse hardware runtime). La documentation a été réalignée sur le code réellement disponible.
 
-### Fonctionnalités présentes
-- Capture JPG locale et preview live.
-- Menus `Capture/Tune/Color/Effect/System`.
-- Réglages caméra (AE, AWB, gain, expo, etc.).
-- Profils couleur, effets de preview, grilles de cadrage.
-- Sauvegarde/chargement de profils utilisateurs.
+## Plan d’amélioration recommandé
 
-### Fonctionnalités annoncées ou implicites incomplètes
-- **Mode galerie** : action présente (`gallery`) mais flux non implémenté.
-- **Support encodeur GPIO** : méthode de setup présente mais intégration incomplète/inopérante.
-- **Robustesse profils** : pas de gestion d’erreurs JSON/corruption fichier.
-- **Portabilité dev** : dépendances RPi strictes, pas de mode simulation/no-camera.
+### P1 — Robustesse runtime
+1. Encadrer les opérations sensibles (`capture_file`, `rename`, `save config`) avec gestion d’exception + message utilisateur.
+2. Ajouter validation/sanitation des noms de fichiers pour le renommage.
 
-## Dette technique / qualité
+### P2 — Qualité et maintenance
+1. Ajouter tests unitaires sur:
+   - `GridOverlay` (cycle + styles),
+   - `HistogramOverlay.update`,
+   - logique sliders d’édition (transformations bornées).
+2. Introduire un lint minimal en CI (`ruff check`).
 
-1. **Absence de tests**
-   - Aucun test unitaire (effets, profils, logique menu).
-   - Aucun test d’intégration minimal avec mock caméra.
-
-2. **Faible tolérance aux erreurs I/O**
-   - `json.loads(PROFILE_FILE.read_text())` sans `try/except` sur JSON invalide.
-   - `capture_file` sans gestion explicite des erreurs de stockage.
-
-3. **Couplage fort UI / logique / hardware**
-   - La logique métier (profils/effets/menus) est imbriquée dans la classe UI.
-   - Rend les tests et évolutions plus coûteux.
-
-4. **Configuration figée**
-   - Résolution, panel, fps cible, dossiers et mappings clavier/GPIO en constantes statiques.
-   - Pas de fichier de configuration utilisateur.
-
-## Plan d’action recommandé
-
-### Phase 1 — Remise en état exécutable (critique)
-1. Déclarer les constantes GPIO manquantes (ou désactiver proprement le bloc encodeur si absent).
-2. Initialiser tous les attributs utilisés (`gallery_mode`, `encoder_enabled`, etc.) dans `__init__`.
-3. Soit:
-   - implémenter les 4 méthodes manquantes (galerie + encodeur),
-   - soit retirer temporairement les appels pour livrer un cœur stable.
-4. Ajouter un check CI lint minimal (au moins `ruff check`).
-
-### Phase 2 — Robustesse et UX
-1. Fiabiliser la sérialisation profils (`try/except`, backup, reset safe).
-2. Ajouter messages d’erreur utilisateur (stockage plein, caméra indisponible, profil corrompu).
-3. Ajouter mode fenêtré debug (non fullscreen) pour développement desktop.
-
-### Phase 3 — Qualité logicielle
-1. Extraire la logique profils/effets/menus dans modules séparés.
-2. Introduire tests unitaires sur:
-   - `apply_effect`
-   - `apply_color_profile`
-   - transitions de menus/actions.
-3. Ajouter un pipeline CI: lint + tests.
+### P3 — Cohérence configuration
+1. Utiliser `self.config.screen_w/h/panel_w` dans la création de fenêtre et layout.
+2. Centraliser les constantes UI dans `config.yaml` pour faciliter les profils d’écrans.
 
 ## Priorités finales
-- **P0 (immédiat)**: corriger méthodes/constantes/attributs manquants pour supprimer les erreurs d’exécution.
-- **P1 (court terme)**: robustesse JSON + gestion d’erreurs capture.
-- **P2 (moyen terme)**: modularisation + tests + CI.
+- **P0**: aucune anomalie bloquante identifiée dans ce snapshot.
+- **P1**: robustesse erreurs I/O.
+- **P2**: tests + CI.
+- **P3**: harmonisation complète config/layout.
