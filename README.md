@@ -1,178 +1,109 @@
 # pimage
 
-Mini application photo orientée Raspberry Pi 4 / CM4 + écran tactile DSI.
+Application photo Python pensée pour Raspberry Pi (Picamera2 + Pygame), avec interface tactile et petit module CLI.
 
-## Vision du projet
+## Objectif du dépôt
 
-`pimage` transforme un Raspberry Pi en **appareil photo créatif autonome**:
-- interface plein écran tactile,
-- workflow orienté terrain (capture rapide + profils),
-- réglages photo manuels et styles visuels temps réel.
+Le projet fournit deux choses complémentaires :
 
-Le but est d'avoir une base solide pour un boîtier custom (CM4 + capteur CSI + écran 800x480).
+- une application caméra interactive (`app_photo.py`) pour capturer et retoucher rapidement des images ;
+- un package Python (`pimage/`) pour la configuration, le logging, le stockage et quelques effets.
 
-## Fonctionnalités actuelles (vérifiées dans le code)
+## État actuel (aligné sur le code)
 
-### 1) Capture + interface
-- Preview live via **Picamera2** + rendu Pygame.
-- UI tactile orientée écran 800x480.
-- Capture photo JPG dans le dossier défini par `config.yaml` (`paths.photos`).
+### 1) Lancement
 
-### 2) Menus de configuration
-L'interface est organisée en **menus**:
-- `Capture`
-- `Tune`
-- `Color`
-- `Effect`
-- `System`
+- Entrypoint package : `python3 -m pimage` (redirige vers `pimage.cli:main`).
+- Le CLI initialise les logs, charge/valide la configuration, puis lance l'UI caméra.
+- Option utile : `--check-config` valide la configuration et quitte sans lancer l'interface.
 
-Cela permet d'utiliser la caméra comme un appareil avec modes dédiés plutôt qu'une simple liste de boutons.
+### 2) Configuration
 
-### 3) Contrôle caméra
-Réglages disponibles:
-- Exposure Value
-- Brightness
-- Contrast
-- Saturation
+La config est gérée par `pimage/config.py` :
 
-> Note: la version actuelle applique ces contrôles via `set_controls`.
+- fichier principal : `config.yaml` ;
+- migration legacy : lit `config.json` si `config.yaml` n'existe pas ;
+- validation des bornes (résolution, largeur de panneau, index caméra, PWM ventilateur, etc.) ;
+- réécriture automatique du fichier avec une structure normalisée.
 
-### 4) Effets créatifs live
-Effets de preview:
-- `none`
-- `noir`
-- `vintage`
+Champs principaux écrits dans la config :
 
-> Note: les effets sont appliqués sur le flux de preview, pas comme pipeline ISP officiel.
+- `paths.photos`
+- `screen.width`, `screen.height`, `screen.panel_width`
+- `camera.index`, `camera.sensor2_enabled`
+- `overlay.default_grid`, `overlay.histogram_interval_ms`
+- `cooling.fan_pwm`, `cooling.curve`
 
-### 5) Grilles d'aide au cadrage
-Sélecteur de grilles en overlay:
-- `thirds`
-- `golden`
-- `diagonals`
-- `dense-6x6`
-- `crop-guides`
+### 3) Interface caméra (`app_photo.py`)
 
-### 6) HUD et popup de réglage
-- Panneau gauche (navigation) + cartes HUD à droite.
-- Popup slider pour ajuster ouverture/vitesse/ISO/EV/Kelvin/ventilation (valeurs UI).
+Fonctionnalités implémentées :
 
-### 7) Édition post-capture
-- Vue `Edit` avec:
-  - crop draggable,
-  - ratios `1:1`, `4:3`, `16:9`,
-  - rotate, flip, undo,
-  - sliders brightness/contrast/saturation/hue,
-  - export JPG.
+- preview live via Picamera2 dans la zone image ;
+- menus/couches UI (capture, réglages, couleur, système) ;
+- capture JPEG dans `paths.photos` avec nom horodaté (`img_YYYYMMDD_HHMMSS_<profil>.jpg`) ;
+- vérification stockage avant capture (lecture seule + espace disque minimum) ;
+- effets preview : `none`, `noir`, `vintage` ;
+- grilles de cadrage via `overlays.py` ;
+- histogramme RGB overlay ;
+- popup de renommage post-capture (clavier tactile si `pygame-vkeyboard` est installé) ;
+- vue d'édition basique : crop, rotation, flip, undo, sliders luminosité/contraste/saturation/teinte, export JPEG.
 
-### 8) Configuration persistante
-- `config.yaml` est lu/écrit automatiquement.
-- Migration legacy `config.json` supportée au chargement.
+### 4) Module stockage (`pimage/storage.py`)
 
----
+Le module fournit :
 
-## Installation (Raspberry Pi OS Bookworm)
+- état stockage (`free_bytes`, `total_bytes`, `read_only`) ;
+- génération de noms de captures ;
+- écriture atomique binaire (`*.tmp` puis replace) ;
+- nettoyage quota sur les JPG les plus anciens.
+
+### 5) Effets (`pimage/effects.py`)
+
+Effets NumPy disponibles :
+
+- `noir` (conversion niveaux de gris) ;
+- `vintage` (canaux colorimétriques modifiés) ;
+- effet inconnu : image conservée (hors clipping/type).
+
+## Installation (Raspberry Pi OS)
+
+Exemple minimal :
 
 ```bash
 sudo apt update
 sudo apt install -y python3-picamera2 python3-pygame python3-numpy
-pip install pygame-vkeyboard
+pip install pygame-vkeyboard pyyaml
 ```
 
-## Lancer l'app
+## Utilisation
 
 ```bash
 python3 -m pimage
 ```
 
-(Compatibilité conservée: `python3 app_photo.py` fonctionne toujours.)
-
-## Contrôles clavier (debug)
-
-- `Space`/`Enter`: capture
-- `↑`/`↓`: paramètre +/-
-- `←`/`→`: menu précédent/suivant
-- `a`: auto exposure ON/OFF
-- `w`: AWB suivant
-- `p`: profil couleur suivant
-- `e`: effet suivant
-- `g`: grille suivante
-- `Esc`: quitter
-
----
-
-## Étude rapide des possibilités hardware (RPi4/CM4)
-
-### Ce que le matériel permet bien
-- Appareil photo embarqué compact basse conso.
-- Démarrage rapide, usage kiosque, écran tactile direct.
-- Contrôle ISP via Picamera2 (expo, gains, couleurs, netteté).
-- Pipeline extensible Python (post-traitements, UI custom, logique métier).
-
-### Axes d'évolution réalistes
-1. **Gestion stockage robuste**
-   - auto-rotation, nettoyage quota, export USB/Wi‑Fi.
-2. **Workflow photo avancé**
-   - rafale, retardateur, bracketing expo, histogramme live.
-3. **Color science**
-   - profils caméra par capteur/lentille, LUT 3D, matching look-cinéma.
-4. **Expérience appareil complet**
-   - battery HUD (I2C), boutons GPIO physiques, mode galerie.
-5. **Qualité image**
-   - calibration optique, gestion bruit ISO, anti-flicker, verrouillage expo/AWB précis.
-
-### Limites typiques à anticiper
-- Performances CPU/GPU si effets lourds en Python pur.
-- Capteurs CSI très variables (latence, rolling shutter, dynamique).
-- Contraintes thermiques en boîtier fermé.
-
----
-
-## Notes hardware
-
-- Pensé pour écran 800x480 en paysage.
-- Panneau de contrôle à droite, preview caméra à gauche.
-- Sauvegarde locale recommandée sur stockage fiable (overlay fs désactivé recommandé).
-
-## Idées “fou-fou” pour la suite
-
-- Mode **"Dream Scanner"**: effet génératif piloté par capteur IMU/GPIO.
-- Profils automatiques selon heure/lumière (day/night adaptation).
-- Capture + style + impression instantanée (ESC/POS).
-- Passage en mode “studio” avec contrôle remote via WebSocket.
-
-
-## Nouveautés UI/UX
-
-- Menus animés en slide-in/fade (0.4s, easing `easeOutQuad`) avec blur léger du preview derrière le panneau.
-- Popup modale de renommage avec overlay semi-transparent + clavier tactile (`pygame-vkeyboard` si disponible, fallback clavier physique).
-- Nouvelle vue **Edit** post-capture: crop draggable (ratios 1:1 / 4:3 / 16:9), réglages brightness/contrast/saturation/hue, rotate/flip, undo (stack max 5), export JPG.
-- `config.yaml` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2* et la sauvegarde de config.
-
-## HUD v2 « Pro Overlay Mode »
-
-- Interface recentrée sur le preview plein écran avec overlays.
-- Nouveau module `overlays.py` pour les grilles (tiers, golden+spirale, diagonales, 6x6, crop guides) et histogramme live RGB (~500ms).
-- Nouveau module `ui_hud.py` pour cartes encadrées cliquables + popup slider et panneaux latéraux animés (easeOut).
-- Configuration migrée vers `config.yaml` (`overlay.default_grid`, `cooling.fan_pwm`, courbe ventilateur, toggle capteur2).
-
----
-
-## Vérification rapide du dépôt
-
-Contrôles exécutés pour cette mise à jour:
+Validation config seule :
 
 ```bash
-python3 -m py_compile app_photo.py overlays.py ui_hud.py
+python3 -m pimage --check-config
 ```
 
-Résultat: compilation Python OK (aucune erreur syntaxique).
+## Tests disponibles
 
+Le dépôt contient des tests unitaires/smoke sur :
 
-## Qualité code (ajouts)
+- la configuration,
+- le stockage,
+- les effets,
+- le mode `--check-config`.
 
-- Package Python `pimage/` avec entrypoint CLI (`python -m pimage`, `--check-config`, `--debug`).
-- Validation de configuration avec erreurs explicites (`ConfigError`) + migration legacy `config.json`.
-- Logging structuré avec rotation (`logs/pimage.log`).
-- CI GitHub Actions: `ruff`, `mypy`, `pytest`.
-- Tests unitaires initiaux (`tests/`) pour config, storage, effets (si NumPy dispo), smoke CLI.
+Lancement :
+
+```bash
+pytest
+```
+
+## Limites connues
+
+- L'application UI dépend fortement du matériel Raspberry Pi (Picamera2 requis).
+- Les réglages HUD (ouverture, vitesse, ISO, Kelvin) servent actuellement surtout d'interface et ne représentent pas tous des contrôles matériels directs appliqués au capteur.
+- Les effets sont appliqués côté preview/traitement logiciel, pas via un pipeline ISP avancé.
