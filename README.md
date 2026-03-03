@@ -91,6 +91,7 @@ Ce résumé est affiché en overlay pour aider le tuning matériel.
 ```bash
 sudo apt update
 sudo apt install -y python3-picamera2 python3-pygame python3-numpy
+pip install pygame-vkeyboard
 ```
 
 ## Lancer l'app
@@ -152,3 +153,11 @@ python3 app_photo.py
 - Profils automatiques selon heure/lumière (day/night adaptation).
 - Capture + style + impression instantanée (ESC/POS).
 - Passage en mode “studio” avec contrôle remote via WebSocket.
+
+
+## Nouveautés UI/UX
+
+- Menus animés en slide-in/fade (0.4s, easing `easeOutQuad`) avec blur léger du preview derrière le panneau.
+- Popup modale de renommage avec overlay semi-transparent + clavier tactile (`pygame-vkeyboard` si disponible, fallback clavier physique).
+- Nouvelle vue **Edit** post-capture: crop draggable (ratios 1:1 / 4:3 / 16:9), réglages brightness/contrast/saturation/hue, rotate/flip, undo (stack max 5), export JPG.
+- `config.json` centralise chemins, résolution et paramètres caméra; menu **System** inclut le toggle *Capteur 2*.
