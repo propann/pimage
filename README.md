@@ -82,8 +82,10 @@ pip install pygame-vkeyboard
 ## Lancer l'app
 
 ```bash
-python3 app_photo.py
+python3 -m pimage
 ```
+
+(Compatibilité conservée: `python3 app_photo.py` fonctionne toujours.)
 
 ## Contrôles clavier (debug)
 
@@ -165,3 +167,12 @@ python3 -m py_compile app_photo.py overlays.py ui_hud.py
 ```
 
 Résultat: compilation Python OK (aucune erreur syntaxique).
+
+
+## Qualité code (ajouts)
+
+- Package Python `pimage/` avec entrypoint CLI (`python -m pimage`, `--check-config`, `--debug`).
+- Validation de configuration avec erreurs explicites (`ConfigError`) + migration legacy `config.json`.
+- Logging structuré avec rotation (`logs/pimage.log`).
+- CI GitHub Actions: `ruff`, `mypy`, `pytest`.
+- Tests unitaires initiaux (`tests/`) pour config, storage, effets (si NumPy dispo), smoke CLI.
