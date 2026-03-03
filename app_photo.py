@@ -922,13 +922,18 @@ class CameraApp:
         base_dist, base_ang, zoom0, angle0 = self.gesture_baseline
         dist, ang = da
         if base_dist > 0.001:
-            self.gallery_zoom = max(0.5, min(4.0, zoom0 * (dist / base_dist)))
+            zoom_ratio = dist / base_dist
+            # Ignore tiny pinch jitter from touchscreen noise.
+            if abs(zoom_ratio - 1.0) > 0.02:
+                self.gallery_zoom = max(0.5, min(4.0, zoom0 * zoom_ratio))
         d_ang = ang - base_ang
         if d_ang > 180:
             d_ang -= 360
         elif d_ang < -180:
             d_ang += 360
-        self.gallery_angle = angle0 + d_ang
+        # Ignore tiny rotation jitter from touchscreen noise.
+        if abs(d_ang) > 2.0:
+            self.gallery_angle = angle0 + d_ang
 
     def disk_worker(self):
         """Refresh free disk space every minute to protect capture operations."""
